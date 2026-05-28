@@ -1,0 +1,15 @@
+# Build output
+build/
+
+# macOS
+.DS_Store
+*.xcuserdata
+*.xcuserstate
+*.xcworkspace/xcuserdata
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+
+# Claude Code
+.claude/

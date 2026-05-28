@@ -1,0 +1,17 @@
+{
+  "new_notification": [
+    "Meow~ Terminal is calling! Go check it out!",
+    "Hey! Terminal's got something for you!",
+    "Your terminal lit up — take a look?",
+    "Something happened in the terminal, don't forget~",
+    "Meow! Your terminal is waiting for a reply!"
+  ],
+  "long_wait": [
+    "Hey hey hey, terminal's been waiting forever!",
+    "Terminal is getting impatient... go check!",
+    "Did you forget your terminal is still open?",
+    "It's been a while... terminal is still waiting...",
+    "If you don't go check, terminal's gonna be mad! Meow!"
+  ],
+  "merged": "You have {count} terminal notifications"
+}
