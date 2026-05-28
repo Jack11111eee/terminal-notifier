@@ -32,8 +32,8 @@ echo "Copying Info.plist..."
 cp "$PROJECT_DIR/TerminalNotifier/Info.plist" "$CONTENTS/Info.plist"
 cp "$PROJECT_DIR/TerminalNotifier/Messages/"*.json "$RESOURCES_DIR/"
 
-echo "Ad-hoc signing..."
-codesign --force --deep --sign - "$APP_BUNDLE"
+echo "Signing with TerminalNotifierDev certificate..."
+codesign --force --deep --sign "TerminalNotifierDev" "$APP_BUNDLE"
 
 echo "Copying to /Applications..."
 cp -R "$APP_BUNDLE" /Applications/
