@@ -40,6 +40,7 @@ class NotificationStateMachine {
     }
 
     func handleEvent(_ event: NotificationEvent) {
+        let oldState = currentState
         switch (currentState, event) {
         case (.idle, .badgeDetected):
             guard !isInCooldown else {
@@ -97,6 +98,11 @@ class NotificationStateMachine {
 
         default:
             break
+        }
+        if String(describing: oldState) != String(describing: currentState) {
+            print("[SM] \(oldState) + \(event) → \(currentState)")
+        } else {
+            print("[SM] \(oldState) + \(event) → (no transition)")
         }
     }
 

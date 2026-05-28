@@ -30,7 +30,8 @@ class OverlayContentView: NSView {
 
     private func layoutViews(petSize: CGFloat) {
         let centerX = bounds.midX
-        let petY = bounds.maxY * 0.35
+        // petY is relative to the content view which starts below menu bar
+        let petY = bounds.height * 0.35
 
         petView.frame = NSRect(
             x: centerX - petSize / 2,
@@ -54,8 +55,11 @@ class OverlayContentView: NSView {
         bubbleView.needsDisplay = true
     }
 
-    @objc private func viewClicked() {
-        onTap?()
+    override func mouseDown(with event: NSEvent) {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if petView.frame.contains(localPoint) || bubbleView.frame.contains(localPoint) {
+            onTap?()
+        }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {

@@ -32,8 +32,12 @@ class OverlayWindowController {
         if window != nil { forceClose() }
         isDismissing = false
 
+        // Use visibleFrame to avoid covering the menu bar
+        let windowRect = screen.visibleFrame
+        let menuBarY = screen.frame.maxY
+
         let window = OverlayWindow(
-            contentRect: screen.frame,
+            contentRect: windowRect,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
@@ -50,7 +54,7 @@ class OverlayWindowController {
         }
 
         let contentView = OverlayContentView(
-            frame: NSRect(origin: .zero, size: screen.frame.size),
+            frame: NSRect(origin: .zero, size: windowRect.size),
             petSize: Constants.defaultPetSize,
             message: message
         )
@@ -65,16 +69,18 @@ class OverlayWindowController {
         self.window = window
         self.contentView = contentView
 
-        animateDrop(from: menuBarIconFrame, screen: screen)
+        animateDrop(menuBarY: menuBarY, windowRect: windowRect)
     }
 
-    private func animateDrop(from menuBarFrame: NSRect, screen: NSScreen) {
+    private func animateDrop(menuBarY: CGFloat, windowRect: NSRect) {
         guard let petView = contentView?.petView else { return }
         petView.wantsLayer = true
 
-        let finalCenterX = screen.frame.midX
-        let finalPetY = screen.frame.maxY * 0.35 + Constants.defaultPetSize / 2
-        let startY = screen.frame.maxY - menuBarFrame.origin.y
+        let finalCenterX = windowRect.midX
+        let finalPetY = windowRect.height * 0.35 + Constants.defaultPetSize / 2
+
+        // Start above the window (at menu bar Y, converted to window-local coords)
+        let startY = windowRect.height + (menuBarY - windowRect.maxY)
 
         petView.layer?.position = CGPoint(x: finalCenterX, y: startY)
 
@@ -93,15 +99,20 @@ class OverlayWindowController {
     }
 
     func beginDismiss() {
-        guard !isDismissing, let screenFrame = window?.screen?.frame ?? NSScreen.main?.frame else {
+        guard !isDismissing,
+              let window,
+              let screen = window.screen else {
             forceClose()
             return
         }
         isDismissing = true
 
-        let menuBarY = screenFrame.maxY
+        let menuBarY = screen.frame.maxY
+        let windowRect = screen.visibleFrame
+        let targetY = windowRect.height + (menuBarY - windowRect.maxY)
+
         let currentPos = contentView?.petView.layer?.position
-            ?? CGPoint(x: screenFrame.midX, y: screenFrame.maxY * 0.35)
+            ?? CGPoint(x: windowRect.midX, y: windowRect.height * 0.35)
 
         if let petView = contentView?.petView {
             petView.wantsLayer = true
@@ -109,7 +120,7 @@ class OverlayWindowController {
             jumpBackAnimator.animate(
                 layer: petView.layer!,
                 from: currentPos,
-                to: CGPoint(x: screenFrame.midX, y: menuBarY),
+                to: CGPoint(x: windowRect.midX, y: targetY),
                 completion: { [weak self] in
                     self?.onJumpBackComplete?()
                 }

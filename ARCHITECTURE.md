@@ -8,53 +8,42 @@
 
 ```
 TerminalNotifier/
-├── TerminalNotifier.xcodeproj
 ├── TerminalNotifier/
 │   ├── Info.plist
-│   ├── TerminalNotifier.entitlements
-│   ├── Assets.xcassets/
-│   │   ├── AppIcon.appiconset/
-│   │   ├── MenuBarIcon.imageset/          # 18×18 像素猫头像
-│   │   └── Sounds/
-│   │       └── notify.aiff
 │   ├── App/
-│   │   ├── AppDelegate.swift              # 应用入口，组装所有模块
-│   │   └── Constants.swift                # 全局常量
+│   │   ├── main.swift                         # 应用入口（手动 NSApplication 启动）
+│   │   ├── AppDelegate.swift                  # 组装所有模块
+│   │   └── Constants.swift                    # 全局常量
 │   ├── MenuBar/
-│   │   └── StatusBarController.swift      # 菜单栏图标 + 下拉菜单
+│   │   └── StatusBarController.swift          # 菜单栏彩色像素猫图标 + 下拉菜单
 │   ├── Detection/
-│   │   ├── BadgeMonitor.swift             # lsappinfo 轮询检测 badge
-│   │   └── TerminalScreenLocator.swift    # 定位 Terminal 所在屏幕
+│   │   ├── TerminalContentMonitor.swift       # AX API 监控 Terminal 文本内容变化
+│   │   ├── BadgeMonitor.swift                 # [已废弃] lsappinfo badge 检测
+│   │   └── TerminalScreenLocator.swift        # 定位 Terminal 所在屏幕
 │   ├── Notification/
-│   │   └── NotificationStateMachine.swift # 通知生命周期状态机
+│   │   └── NotificationStateMachine.swift     # 通知生命周期状态机
 │   ├── Overlay/
-│   │   ├── OverlayWindowController.swift  # 透明悬浮窗管理
-│   │   ├── OverlayContentView.swift       # 主容器视图（宠物 + 气泡）
-│   │   ├── PetSpriteView.swift            # 像素猫渲染
-│   │   └── SpeechBubbleView.swift         # 漫画气泡框
+│   │   ├── OverlayWindowController.swift      # 透明悬浮窗管理
+│   │   ├── OverlayContentView.swift           # 主容器视图（宠物 + 气泡）
+│   │   ├── PetSpriteView.swift                # 像素猫渲染（代码绘制的彩色像素猫）
+│   │   └── SpeechBubbleView.swift             # 漫画气泡框
 │   ├── Animation/
-│   │   ├── DropBounceAnimator.swift       # 掉落 + 弹跳动画
-│   │   ├── JumpBackAnimator.swift         # 跳回菜单栏动画
-│   │   └── SpriteFramePlayer.swift        # 序列帧播放器
+│   │   ├── DropBounceAnimator.swift           # 掉落 + 弹跳动画
+│   │   ├── JumpBackAnimator.swift             # 跳回菜单栏动画
+│   │   └── SpriteFramePlayer.swift            # 序列帧播放器
 │   ├── Messages/
-│   │   ├── MessageProvider.swift          # 分类随机选句
-│   │   ├── messages_zh.json               # 中文预设
-│   │   └── messages_en.json               # 英文预设
+│   │   ├── MessageProvider.swift              # 分类随机选句
+│   │   ├── messages_zh.json                   # 中文预设
+│   │   └── messages_en.json                   # 英文预设
 │   ├── Settings/
-│   │   ├── SettingsWindowController.swift  # 设置窗口壳（AppKit）
-│   │   ├── SettingsView.swift             # 设置界面（SwiftUI）
-│   │   └── PreferencesManager.swift       # UserDefaults 读写
+│   │   ├── SettingsWindowController.swift      # 设置窗口壳（AppKit）
+│   │   ├── SettingsView.swift                 # 设置界面（SwiftUI）
+│   │   └── PreferencesManager.swift           # UserDefaults 读写
 │   ├── History/
-│   │   └── NotificationHistoryManager.swift # 通知历史存储
+│   │   └── NotificationHistoryManager.swift   # 通知历史存储
 │   └── Sound/
-│       └── SoundManager.swift             # 音效播放
-├── Resources/
-│   └── Sprites/
-│       ├── cat_idle.png                   # 菜单栏图标 18×18
-│       ├── cat_drop.png                   # 掉落帧 sprite sheet
-│       ├── cat_land.png                   # 落地帧
-│       ├── cat_talk.png                   # 说话帧
-│       └── cat_jump.png                   # 跳回帧
+│       └── SoundManager.swift                 # 音效播放
+├── build.sh                                   # 编译 + ad-hoc 签名 + 安装到 /Applications
 └── README.md
 ```
 
@@ -62,29 +51,27 @@ TerminalNotifier/
 
 ## 2. 关键技术决策
 
-### 2.1 Badge 检测：lsappinfo 轮询（非 Accessibility API）
+### 2.1 终端变化检测：Accessibility API 监控文本内容
 
-原方案为 Accessibility API（AXUIElement），研究后改用 `lsappinfo` CLI 轮询。
+经过多轮迭代最终采用的方案。过程：
 
-**原因：**
-- `lsappinfo` 是 macOS 内置命令，可直接读取任意应用的 Dock badge 值，**无需任何系统权限**
-- Accessibility API 的 AXObserver 对 Dock badge 变化不保证可靠触发
-- macOS 15 (Sequoia) 存在 TCC 权限缓存 bug，导致 AXUIElement 间歇性失败
-- 1 秒轮询在体感上等同于实时，且实现简单可靠
+1. **lsappinfo CLI**：Terminal 的 badge 是私有渲染，`lsappinfo info -only StatusLabel` 返回空
+2. **AX API 读 AXStatusLabel**：Dock 中 Terminal 的 item 不支持该属性（error -25212）
+3. **AX API 读 AXTextArea**：成功。监控 Terminal 窗口的实际文本内容变化
 
-**检测命令：**
-```bash
-lsappinfo info -only StatusLabel "Terminal"
+**工作原理：**
+- 每 1 秒通过 `AXUIElementCopyAttributeValue` 读取 Terminal 的 `AXFocusedWindow` → `AXSplitGroup` → `AXScrollArea` → `AXTextArea` 的文本值
+- 计算哈希值，与前次对比
+- 当 Terminal **不是**最前面应用 + 文本哈希变化 → 触发提醒
+- 优先使用 `AXFocusedWindow`（多窗口场景下选对窗口）
+- 需要辅助功能权限（`NSAccessibilityUsageDescription` + 用户手动授权）
 
-# 有 badge → "StatusLabel"={ "label"="1" }
-# 无 badge → "StatusLabel"=(null)
-```
-
-### 2.2 悬浮窗口：NSWindow level 101 + fullScreenAuxiliary
+### 2.2 悬浮窗口：NSWindow level 101 + visibleFrame
 
 - `NSWindow.Level.screenSaver`（level 101）可覆盖包括全屏应用在内的所有窗口
 - `collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]`
-- 无边框 + 透明背景的 NSWindow 天然支持透明区域点击穿透
+- 窗口 rect 使用 `screen.visibleFrame`（避开菜单栏区域），否则菜单栏猫咪图标无法点击
+- 无边框 + 透明背景，`hitTest` 配合 `mouseDown` 实现：点击猫/气泡 → 关闭，点击空白 → 穿透
 
 ### 2.3 动画：CAKeyframeAnimation + Timer 帧播放
 
@@ -92,42 +79,50 @@ lsappinfo info -only StatusLabel "Terminal"
 - 序列帧播放用 `Timer`（macOS 13 不支持 CADisplayLink，CADisplayLink 是 macOS 14+）
 - 像素风 8 FPS 足够流畅
 
-### 2.4 无需 App Sandbox
+### 2.4 权限需求
 
-- `Process` 调用 `lsappinfo` 需要沙盒外运行
-- `CGWindowListCopyWindowInfo` 需要非沙盒环境
-- 与 GitHub Release 分发方式一致（非 App Store）
+- **辅助功能权限**：必需。用于通过 AX API 读取 Terminal 窗口文本内容
+- **App Sandbox**：关闭。AX API + `CGWindowListCopyWindowInfo` 需要非沙盒环境
+- **ad-hoc 签名**：编译后自动签名（`codesign --sign -`），保持 TCC 权限跨重编译稳定
+- **TCC 注意事项**：重编译后二进制 hash 变化可能导致 TCC 权限失效，用 `tccutil reset Accessibility com.terminalnotifier.app` 重置后重新授权，之后 ad-hoc 签名可保持稳定
 
 ---
 
 ## 3. 模块职责与接口
 
-### 3.1 App / AppDelegate
+### 3.1 App / main.swift + AppDelegate
 
-应用入口。组装所有模块，管理生命周期。
+入口点采用手动 `main.swift` 而非 `@main` 属性（`@main` 在手动 swiftc 编译的 .app bundle 中不可靠，`applicationDidFinishLaunching` 不会被调用）。
 
 ```swift
-// Info.plist 关键配置
-// LSUIElement = YES          → 无 Dock 图标（纯菜单栏应用）
-// LSMinimumSystemVersion = 13.0
+// main.swift — 入口点
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.accessory)
+app.run()
 
-@main
+// AppDelegate.swift — 组装所有模块
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController!
-    private var badgeMonitor: BadgeMonitor!
+    private var contentMonitor: TerminalContentMonitor!
     private var stateMachine: NotificationStateMachine!
     private var overlayController: OverlayWindowController!
-    private var preferences: PreferencesManager!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 1. 初始化 PreferencesManager
+        // 1. 初始化 OverlayWindowController
         // 2. 初始化 StatusBarController
-        // 3. 初始化 BadgeMonitor，设置回调
+        // 3. 初始化 TerminalContentMonitor
         // 4. 初始化 StateMachine
-        // 5. 初始化 OverlayWindowController
-        // 6. 启动 badge 监测
+        // 5. 设置回调链
+        // 6. 启动内容监测
     }
 }
+
+// Info.plist 关键配置
+// LSUIElement = YES → 无 Dock 图标（纯菜单栏应用）
+// LSMinimumSystemVersion = 13.0
+// NSAccessibilityUsageDescription = "Terminal Notifier monitors Terminal.app window content..."
 ```
 
 ### 3.2 MenuBar / StatusBarController
@@ -161,57 +156,36 @@ enum MenuBarIconState {
 - 分隔线
 - "退出 Terminal Notifier"
 
-### 3.3 Detection / BadgeMonitor
+### 3.3 Detection / TerminalContentMonitor
 
-核心检测模块。通过 `lsappinfo` CLI 轮询 Terminal.app 的 Dock badge。
+核心检测模块。通过 Accessibility API 监控 Terminal.app 窗口的文本内容变化。
 
 ```swift
-protocol BadgeMonitorDelegate: AnyObject {
-    func badgeMonitor(_ monitor: BadgeMonitor, didDetectBadge label: String)
-    func badgeMonitorDidClearBadge(_ monitor: BadgeMonitor)
+protocol TerminalContentMonitorDelegate: AnyObject {
+    func terminalContentDidChange(_ monitor: TerminalContentMonitor)
 }
 
-class BadgeMonitor {
-    weak var delegate: BadgeMonitorDelegate?
+class TerminalContentMonitor {
+    weak var delegate: TerminalContentMonitorDelegate?
     private var timer: Timer?
-    private var lastBadgeLabel: String?
+    private var lastContentHash: Int?
 
     func startMonitoring()
     func stopMonitoring()
-
-    private func checkBadge()
+    private func checkContent()
+    private func isTerminalFrontmost() -> Bool
+    private func terminalContentHash() -> Int?
 }
 ```
 
-**Swift 实现要点：**
-```swift
-private func checkBadge() {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/lsappinfo")
-    process.arguments = ["info", "-only", "StatusLabel", "Terminal"]
+**工作原理：**
+1. 检查 Terminal 是否前台（`NSWorkspace.shared.frontmostApplication`）
+2. 前台 → 更新缓存哈希，不触发（用户在看）
+3. 后台 → 读 `AXFocusedWindow` → `AXSplitGroup` → `AXScrollArea` → `AXTextArea` 文本哈希
+4. 哈希变化 → 触发 delegate
+5. `AXFocusedWindow` 优先于 `windowList.first`
 
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.launch()
-
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    let output = String(data: data, encoding: .utf8) ?? ""
-
-    // 正则匹配 "label"="(.+?)"
-    if let match = output.range(of: #""label"="(.+?)""#, options: .regularExpression) {
-        let label = /* 提取匹配组 */
-        if lastBadgeLabel == nil {
-            delegate?.badgeMonitor(self, didDetectBadge: label)
-        }
-        lastBadgeLabel = label
-    } else {
-        if lastBadgeLabel != nil {
-            delegate?.badgeMonitorDidClearBadge(self)
-        }
-        lastBadgeLabel = nil
-    }
-}
-```
+> BadgeMonitor.swift 保留但已废弃。Terminal 的 Dock badge 是私有渲染，lsappinfo 和 AXStatusLabel 均无法读取。
 
 ### 3.4 Detection / TerminalScreenLocator
 
@@ -582,9 +556,9 @@ class SoundManager {
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          AppDelegate                                 │
-│  ┌──────────┐     ┌──────────────┐     ┌──────────────────────┐     │
-│  │BadgeMonitor│────►│StateMachine  │────►│OverlayWindowController│   │
-│  │ (1s poll) │     │              │     │                      │     │
+│  ┌───────────────┐ ┌──────────────┐ ┌──────────────────────┐     │
+│  │ContentMonitor  │→│StateMachine  │→│OverlayWindowController│   │
+│  │ (AX 1s poll)  │ │              │ │                      │     │
 │  └──────────┘     │ idle         │     │  PetSpriteView       │     │
 │       │            │  ↓ detected  │     │  SpeechBubbleView    │     │
 │       │            │  ↓ animIn    │     │  DropBounceAnimator  │     │
@@ -607,7 +581,7 @@ class SoundManager {
 ```
 
 **主流程（10 步）：**
-1. `BadgeMonitor` 每秒调 `lsappinfo`，检测到 badge → 通知 `AppDelegate`
+1. `TerminalContentMonitor` 每秒调 AX API，检测到 Terminal 后台文本变化 → 通知 `AppDelegate`
 2. `AppDelegate` 检查 `PreferencesManager`（是否启用、是否冷却中、是否免打扰）
 3. 通过 → 向 `StateMachine` 发送 `.badgeDetected`
 4. `StateMachine` 转为 `.detected` → `.animatingIn`
@@ -638,9 +612,10 @@ class SoundManager {
 
 **Xcode 项目配置：**
 - Deployment Target: macOS 13.0
-- Signing: Developer ID（非 App Store）
+- Signing: ad-hoc（`codesign --force --deep --sign -`），重编译后签名保持 TCC 权限
 - App Sandbox: **关闭**
-- Info.plist: `LSUIElement = YES`
+- Info.plist: `LSUIElement = YES` + `NSAccessibilityUsageDescription`
+- 编译后自动安装到 `/Applications/`，`build.sh` 一步完成 编译→签名→安装
 
 **开机自启：**
 ```swift
@@ -666,19 +641,19 @@ func setLaunchAtLogin(_ enabled: Bool) {
 
 ## 7. 实施阶段
 
-### Phase 1：骨架 + Badge 检测
-- 创建 Xcode 项目，配置 Info.plist（LSUIElement）
-- 实现 `StatusBarController`（菜单栏静态图标 + 基础菜单）
-- 实现 `BadgeMonitor`（lsappinfo 轮询）
-- 控制台打印 badge 状态变化
-- **验证：** Terminal.app 中运行 `tput bel` 触发 badge → 观察控制台日志
+### Phase 1：骨架 + 内容检测
+- 创建 `main.swift` 手动入口点（`@main` 不适用于手动 swiftc 编译）
+- 实现 `StatusBarController`（22×22 彩色像素猫图标 + 基础菜单，三状态：normal/alert/paused）
+- 实现 `TerminalContentMonitor`（AX API 1s 轮询 Terminal 文本内容）
+- 辅助功能权限引导 + 授权
+- **验证：** 切到浏览器，Terminal 跑 `sleep 3 && echo 测试` → 控制台输出内容变化日志
 
 ### Phase 2：透明悬浮窗 + 静态显示
-- 实现 `OverlayWindowController`（透明窗口配置）
-- 实现 `OverlayContentView`（占位矩形 + 文字）
-- 实现 `SpeechBubbleView`（静态气泡框）
-- Badge 检测 → 显示悬浮窗，点击/Esc 关闭
-- **验证：** badge 触发 → 看到悬浮窗，全屏应用上也能显示，点击/Esc 可关闭
+- 实现 `OverlayWindowController`（`screen.visibleFrame` 避菜单栏，`hitTest` + `mouseDown` 点击猫/气泡关闭）
+- 实现 `OverlayContentView`（猫咪 + 气泡布局）
+- 实现 `SpeechBubbleView`（漫画气泡框）
+- 内容变化 → 显示悬浮窗，点击猫/气泡 或 Esc 关闭
+- **验证：** 悬浮窗覆盖全屏应用 + 菜单栏仍可点击 + 点击关闭有效
 
 ### Phase 3：动画系统
 - 实现 `DropBounceAnimator`（阻尼振荡）

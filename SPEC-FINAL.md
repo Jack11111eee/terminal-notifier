@@ -6,9 +6,11 @@
 
 ## 1. 产品概要
 
-**一句话描述**：一个 macOS 菜单栏像素猫应用，当 Terminal.app Dock 图标出现红点（badge）时，像素猫从菜单栏掉落到屏幕上，用漫画气泡提醒你去查看终端。
+**一句话描述**：一个 macOS 菜单栏像素猫应用，当 Terminal.app 在后台出现新输出时（如 Claude Code 等待命令确认），像素猫从菜单栏掉落到屏幕上，用漫画气泡提醒你去查看终端。
 
 **核心场景**：用户在使用 Claude Code / Codex CLI 时，终端等待命令确认或任务中断，但用户切到了其他窗口没注意到。
+
+> 2026-05-28 更新：原计划检测 Dock badge，实现中发现 Terminal 的 badge 是私有渲染，lsappinfo 和 Accessibility API 均无法读取。实际采用 Accessibility API 监控 Terminal 窗口的 AXTextArea 文本内容变化替代。
 
 ---
 
@@ -19,9 +21,9 @@
 | 项目 | 决策 |
 |------|------|
 | 支持终端 | 仅 Terminal.app（第一版） |
-| 触发事件 | Dock 栏图标 badge（红点）出现 |
-| 前台也触发 | 是，不管终端是否在最前面都触发 |
-| 检测方式 | 实时 |
+| 触发事件 | Terminal 在后台时窗口文本内容变化（等效于用户离开 Terminal 后有新输出） |
+| 前台抑制 | Terminal 在最前面时不触发（用户正在看） |
+| 检测方式 | 1 秒轮询，通过 Accessibility API 读取 Terminal 的 AXFocusedWindow → AXTextArea 文本哈希值 |
 
 ### 2.2 菜单栏宠物
 
@@ -119,19 +121,17 @@
 
 第一版可以极简：idle 1 帧 + 其余用 Core Animation 位移模拟，后续再加帧动画丰富度。
 
-### 3.3 Dock Badge 检测方案
+### 3.3 终端变化检测方案（已实现）
 
-这是技术上最关键的一环。macOS 没有公开 API 直接监听其他应用的 Dock badge 变化。可行方案：
+实现中经历多次迭代，最终方案如下：
 
-| 方案 | 原理 | 优缺点 |
-|------|------|--------|
-| **A. Accessibility API** | 通过 AXUIElement 读取 Dock 进程中 Terminal 图标的 badge 属性 | 最可靠，但需要辅助功能权限 |
-| **B. NSDistributedNotificationCenter** | 监听系统通知中 badge 变化相关事件 | 不一定所有 badge 变化都有通知，不够稳定 |
-| **C. 定时轮询 CGWindowList** | 截取 Dock 区域检查 badge 像素 | hack 方式，不推荐 |
+| 尝试 | 方案 | 结果 |
+|------|------|------|
+| lsappinfo CLI 轮询 | 读 Terminal 的 StatusLabel | 空返回——Terminal 的 badge 是私有渲染，不走标准 Dock badge API |
+| AX API 读 Dock 的 AXStatusLabel | 读 Dock 中 Terminal 元素的 badge 属性 | 返回 error -25212（kAXErrorAttributeUnsupported）|
+| **AX API 监控 Terminal 文本内容** | 定时读 Terminal 的 AXFocusedWindow → AXTextArea 文本哈希值 | **有效**。Terminal 不在最前面 + 内容变化 → 触发提醒 |
 
-**推荐方案 A**，你已接受"功能优先、权限多也接受"。应用启动时引导用户授予辅助功能权限即可。
-
-**我的回答**：方案A。
+**最终方案**：Accessibility API 读取 Terminal 窗口文本内容，1 秒轮询。需要辅助功能权限，用户已接受。窗口选择优先用 `AXFocusedWindow`，确保多窗口场景正确。
 
 ---
 

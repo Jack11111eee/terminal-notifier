@@ -1,10 +1,18 @@
 import AppKit
 import ServiceManagement
 
+func tnLog(_ msg: String) {
+    if let fh = FileHandle(forWritingAtPath: "/tmp/terminal-notifier-debug.log"),
+       let data = "[APP] \(msg)\n".data(using: .utf8) {
+        fh.seekToEndOfFile()
+        fh.write(data)
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusBarController: StatusBarController!
-    private var badgeMonitor: BadgeMonitor!
+    private var contentMonitor: TerminalContentMonitor!
     private var overlayController: OverlayWindowController!
     private var stateMachine: NotificationStateMachine!
     private var settingsController: SettingsWindowController!
@@ -16,11 +24,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         overlayController = OverlayWindowController()
         statusBarController = StatusBarController()
-        badgeMonitor = BadgeMonitor()
+        contentMonitor = TerminalContentMonitor()
         settingsController = SettingsWindowController()
         stateMachine = NotificationStateMachine(locale: preferences.resolvedLocale)
 
-        badgeMonitor.delegate = self
+        contentMonitor.delegate = self
         stateMachine.delegate = self
 
         overlayController.onDismissRequested = { [weak self] in
@@ -38,8 +46,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.settingsController.showSettings(preferences: self.preferences)
         }
         statusBarController.onPauseToggled = { [weak self] paused in
-            if paused { self?.badgeMonitor.stopMonitoring() }
-            else { self?.badgeMonitor.startMonitoring() }
+            if paused { self?.contentMonitor.stopMonitoring() }
+            else { self?.contentMonitor.startMonitoring() }
         }
         statusBarController.onHistoryClicked = { [weak self] in self?.showHistory() }
         statusBarController.onQuitClicked = { NSApplication.shared.terminate(nil) }
@@ -56,20 +64,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         lastLaunchAtLoginValue = preferences.launchAtLogin
 
-        badgeMonitor.startMonitoring()
+        contentMonitor.startMonitoring()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        badgeMonitor.stopMonitoring()
+        contentMonitor.stopMonitoring()
         overlayController.close()
     }
 
     private func showOverlay(message: String) {
-        guard preferences.enabled, !preferences.isInDNDPeriod else { return }
+        tnLog("showOverlay: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod)")
+        guard preferences.enabled, !preferences.isInDNDPeriod else {
+            tnLog("showOverlay BLOCKED: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod)")
+            return
+        }
         let screen = TerminalScreenLocator.locateScreen()
         let menuBarFrame = statusBarController.menuBarIconFrame ?? .zero
+        tnLog("showOverlay: calling overlayController.show screen=\(screen)")
         overlayController.show(on: screen, message: message, menuBarIconFrame: menuBarFrame)
         soundManager.playNotificationSound()
+        tnLog("showOverlay: done")
     }
 
     private func showHistory() {
@@ -96,18 +110,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-extension AppDelegate: BadgeMonitorDelegate {
-    func badgeMonitor(_ monitor: BadgeMonitor, didDetectBadge label: String) {
-        guard preferences.enabled, !preferences.isInDNDPeriod else { return }
+extension AppDelegate: TerminalContentMonitorDelegate {
+    func terminalContentDidChange(_ monitor: TerminalContentMonitor) {
+        tnLog("terminalContentDidChange — forwarding to stateMachine")
+        guard preferences.enabled, !preferences.isInDNDPeriod else {
+            tnLog("terminalContentDidChange BLOCKED by prefs")
+            return
+        }
         stateMachine.handleEvent(.badgeDetected)
-    }
-    func badgeMonitorDidClearBadge(_ monitor: BadgeMonitor) {
-        stateMachine.handleEvent(.badgeCleared)
     }
 }
 
 extension AppDelegate: NotificationStateMachineDelegate {
     func stateMachine(_ sm: NotificationStateMachine, didTransitionTo state: NotificationState) {
+        tnLog("stateMachine → \(state)")
         switch state {
         case .idle: statusBarController.updateIcon(state: .normal)
         case .detected, .animatingIn: statusBarController.updateIcon(state: .notifying)
@@ -116,14 +132,17 @@ extension AppDelegate: NotificationStateMachineDelegate {
         }
     }
     func stateMachine(_ sm: NotificationStateMachine, shouldShowOverlayWithMessage message: String) {
+        tnLog("stateMachine: shouldShowOverlay msg=\(message)")
         historyManager.addRecord(NotificationRecord(
-            id: UUID(), timestamp: Date(), badgeLabel: "detected", message: message, category: "new_notification"))
+            id: UUID(), timestamp: Date(), badgeLabel: "content-change", message: message, category: "new_notification"))
         showOverlay(message: message)
     }
     func stateMachine(_ sm: NotificationStateMachine, shouldUpdateMessage message: String) {
+        tnLog("stateMachine: shouldUpdate msg=\(message)")
         overlayController.updateMessage(message)
     }
     func stateMachineShouldDismissOverlay(_ sm: NotificationStateMachine) {
+        tnLog("stateMachine: shouldDismiss")
         if preferences.switchToTerminal {
             NSWorkspace.shared.runningApplications
                 .first { $0.bundleIdentifier == "com.apple.Terminal" }?

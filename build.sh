@@ -23,6 +23,7 @@ swiftc \
     -framework AppKit \
     -framework SwiftUI \
     -framework ServiceManagement \
+    -framework ApplicationServices \
     -target arm64-apple-macosx13.0 \
     -O \
     $SOURCES
@@ -31,9 +32,15 @@ echo "Copying Info.plist..."
 cp "$PROJECT_DIR/TerminalNotifier/Info.plist" "$CONTENTS/Info.plist"
 cp "$PROJECT_DIR/TerminalNotifier/Messages/"*.json "$RESOURCES_DIR/"
 
+echo "Ad-hoc signing..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+
+echo "Copying to /Applications..."
+cp -R "$APP_BUNDLE" /Applications/
+
 echo ""
 echo "=== Build complete ==="
 echo "App bundle: $APP_BUNDLE"
+echo "Installed:  /Applications/$APP_NAME.app"
 echo ""
-echo "To run: open $APP_BUNDLE"
-echo "Or:    $MACOS_DIR/$APP_NAME"
+echo "To run: open /Applications/$APP_NAME.app"
