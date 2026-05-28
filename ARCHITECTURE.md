@@ -17,8 +17,7 @@ TerminalNotifier/
 │   ├── MenuBar/
 │   │   └── StatusBarController.swift          # 菜单栏彩色像素猫图标 + 下拉菜单
 │   ├── Detection/
-│   │   ├── TerminalContentMonitor.swift       # AX API 监控 Terminal 文本内容变化
-│   │   ├── BadgeMonitor.swift                 # [已废弃] lsappinfo badge 检测
+│   │   ├── TerminalContentMonitor.swift       # lsappinfo 轮询 Terminal Dock badge
 │   │   └── TerminalScreenLocator.swift        # 定位 Terminal 所在屏幕
 │   ├── Notification/
 │   │   └── NotificationStateMachine.swift     # 通知生命周期状态机
@@ -43,7 +42,7 @@ TerminalNotifier/
 │   │   └── NotificationHistoryManager.swift   # 通知历史存储
 │   └── Sound/
 │       └── SoundManager.swift                 # 音效播放
-├── build.sh                                   # 编译 + ad-hoc 签名 + 安装到 /Applications
+├── build.sh                                   # 编译 + TerminalNotifierDev 证书签名 + 安装到 /Applications
 └── README.md
 ```
 
@@ -51,20 +50,21 @@ TerminalNotifier/
 
 ## 2. 关键技术决策
 
-### 2.1 终端变化检测：Accessibility API 监控文本内容
+### 2.1 终端变化检测：lsappinfo 读取 Dock Badge
 
-经过多轮迭代最终采用的方案。过程：
+经过多轮迭代最终采用的方案：
 
-1. **lsappinfo CLI**：Terminal 的 badge 是私有渲染，`lsappinfo info -only StatusLabel` 返回空
+1. **lsappinfo "Terminal"**：应用名不匹配，返回空
 2. **AX API 读 AXStatusLabel**：Dock 中 Terminal 的 item 不支持该属性（error -25212）
-3. **AX API 读 AXTextArea**：成功。监控 Terminal 窗口的实际文本内容变化
+3. **AX API 读 AXTextArea**：Terminal AX 渲染值不断变化 → 频繁误触发，已废弃
+4. **lsappinfo com.apple.Terminal**（最终方案）：用 Bundle ID 读取 Dock badge
 
 **工作原理：**
-- 每 1 秒通过 `AXUIElementCopyAttributeValue` 读取 Terminal 的 `AXFocusedWindow` → `AXSplitGroup` → `AXScrollArea` → `AXTextArea` 的文本值
-- 计算哈希值，与前次对比
-- 当 Terminal **不是**最前面应用 + 文本哈希变化 → 触发提醒
-- 优先使用 `AXFocusedWindow`（多窗口场景下选对窗口）
-- 需要辅助功能权限（`NSAccessibilityUsageDescription` + 用户手动授权）
+- 每 1 秒执行 `lsappinfo info -only StatusLabel com.apple.Terminal`
+- 解析输出中的 `"label"="N"`，N > 0 表示有 badge
+- 当 Terminal **不是**最前面应用 + badge 出现 → 触发提醒
+- 首次启动捕获当前 badge 值作为基线，避免误触发已有 badge
+- **无需辅助功能权限**
 
 ### 2.2 悬浮窗口：NSWindow level 101 + visibleFrame
 
@@ -81,10 +81,9 @@ TerminalNotifier/
 
 ### 2.4 权限需求
 
-- **辅助功能权限**：必需。用于通过 AX API 读取 Terminal 窗口文本内容
-- **App Sandbox**：关闭。AX API + `CGWindowListCopyWindowInfo` 需要非沙盒环境
-- **ad-hoc 签名**：编译后自动签名（`codesign --sign -`），保持 TCC 权限跨重编译稳定
-- **TCC 注意事项**：重编译后二进制 hash 变化可能导致 TCC 权限失效，用 `tccutil reset Accessibility com.terminalnotifier.app` 重置后重新授权，之后 ad-hoc 签名可保持稳定
+- **无特殊权限需求**。Badge 检测通过 `lsappinfo` 命令读取，无需辅助功能权限或屏幕录制权限
+- **App Sandbox**：关闭。`Process` 执行 CLI 命令 + `CGWindowListCopyWindowInfo` 需要非沙盒环境
+- **代码签名**：自签证书 `TerminalNotifierDev`（`codesign --sign "TerminalNotifierDev"`），保持 TCC 权限跨重编译稳定（如未来需要其他权限）
 
 ---
 
@@ -122,7 +121,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // Info.plist 关键配置
 // LSUIElement = YES → 无 Dock 图标（纯菜单栏应用）
 // LSMinimumSystemVersion = 13.0
-// NSAccessibilityUsageDescription = "Terminal Notifier monitors Terminal.app window content..."
 ```
 
 ### 3.2 MenuBar / StatusBarController
@@ -158,7 +156,7 @@ enum MenuBarIconState {
 
 ### 3.3 Detection / TerminalContentMonitor
 
-核心检测模块。通过 Accessibility API 监控 Terminal.app 窗口的文本内容变化。
+核心检测模块。通过 `lsappinfo` CLI 轮询 Terminal.app 的 Dock badge。
 
 ```swift
 protocol TerminalContentMonitorDelegate: AnyObject {
@@ -168,24 +166,24 @@ protocol TerminalContentMonitorDelegate: AnyObject {
 class TerminalContentMonitor {
     weak var delegate: TerminalContentMonitorDelegate?
     private var timer: Timer?
-    private var lastContentHash: Int?
+    private var lastBadgeLabel: String?
 
     func startMonitoring()
     func stopMonitoring()
-    private func checkContent()
+    private func checkBadge()
     private func isTerminalFrontmost() -> Bool
-    private func terminalContentHash() -> Int?
+    private func readBadge() -> String?
 }
 ```
 
 **工作原理：**
-1. 检查 Terminal 是否前台（`NSWorkspace.shared.frontmostApplication`）
-2. 前台 → 更新缓存哈希，不触发（用户在看）
-3. 后台 → 读 `AXFocusedWindow` → `AXSplitGroup` → `AXScrollArea` → `AXTextArea` 文本哈希
-4. 哈希变化 → 触发 delegate
-5. `AXFocusedWindow` 优先于 `windowList.first`
+1. 启动时捕获当前 badge 值作为基线（避免对已有 badge 误触发）
+2. 每秒执行 `lsappinfo info -only StatusLabel com.apple.Terminal`
+3. 解析 `"label"="N"` 获取 badge 数值
+4. Terminal 前台 → 更新基线，不触发（用户在看）
+5. Terminal 后台 + badge 从 nil/0 变为非零 → 触发 delegate
 
-> BadgeMonitor.swift 保留但已废弃。Terminal 的 Dock badge 是私有渲染，lsappinfo 和 AXStatusLabel 均无法读取。
+> 之前尝试的 AX 文本内容监控因 Terminal AX 渲染值不断变化导致频繁误触发，已废弃。
 
 ### 3.4 Detection / TerminalScreenLocator
 
@@ -558,7 +556,7 @@ class SoundManager {
 │                          AppDelegate                                 │
 │  ┌───────────────┐ ┌──────────────┐ ┌──────────────────────┐     │
 │  │ContentMonitor  │→│StateMachine  │→│OverlayWindowController│   │
-│  │ (AX 1s poll)  │ │              │ │                      │     │
+│  │(lsappinfo poll)│ │              │ │                      │     │
 │  └──────────┘     │ idle         │     │  PetSpriteView       │     │
 │       │            │  ↓ detected  │     │  SpeechBubbleView    │     │
 │       │            │  ↓ animIn    │     │  DropBounceAnimator  │     │
@@ -581,7 +579,7 @@ class SoundManager {
 ```
 
 **主流程（10 步）：**
-1. `TerminalContentMonitor` 每秒调 AX API，检测到 Terminal 后台文本变化 → 通知 `AppDelegate`
+1. `TerminalContentMonitor` 每秒执行 `lsappinfo`，检测到 Terminal 后台 badge 出现 → 通知 `AppDelegate`
 2. `AppDelegate` 检查 `PreferencesManager`（是否启用、是否冷却中、是否免打扰）
 3. 通过 → 向 `StateMachine` 发送 `.badgeDetected`
 4. `StateMachine` 转为 `.detected` → `.animatingIn`
@@ -612,9 +610,9 @@ class SoundManager {
 
 **Xcode 项目配置：**
 - Deployment Target: macOS 13.0
-- Signing: ad-hoc（`codesign --force --deep --sign -`），重编译后签名保持 TCC 权限
+- Signing: 自签证书 `TerminalNotifierDev`（`codesign --force --deep --sign "TerminalNotifierDev"`），保持签名一致性
 - App Sandbox: **关闭**
-- Info.plist: `LSUIElement = YES` + `NSAccessibilityUsageDescription`
+- Info.plist: `LSUIElement = YES`
 - 编译后自动安装到 `/Applications/`，`build.sh` 一步完成 编译→签名→安装
 
 **开机自启：**
@@ -641,12 +639,12 @@ func setLaunchAtLogin(_ enabled: Bool) {
 
 ## 7. 实施阶段
 
-### Phase 1：骨架 + 内容检测
+### Phase 1：骨架 + Badge 检测 ✅
 - 创建 `main.swift` 手动入口点（`@main` 不适用于手动 swiftc 编译）
 - 实现 `StatusBarController`（22×22 彩色像素猫图标 + 基础菜单，三状态：normal/alert/paused）
-- 实现 `TerminalContentMonitor`（AX API 1s 轮询 Terminal 文本内容）
-- 辅助功能权限引导 + 授权
-- **验证：** 切到浏览器，Terminal 跑 `sleep 3 && echo 测试` → 控制台输出内容变化日志
+- 实现 `TerminalContentMonitor`（`lsappinfo` 1s 轮询 Dock badge）
+- ~~辅助功能权限引导 + 授权~~ 不再需要
+- **验证：** 切到浏览器，Terminal 跑 `sleep 2 && printf "\a"` → badge 出现 → 猫弹窗
 
 ### Phase 2：透明悬浮窗 + 静态显示
 - 实现 `OverlayWindowController`（`screen.visibleFrame` 避菜单栏，`hitTest` + `mouseDown` 点击猫/气泡关闭）

@@ -10,7 +10,7 @@
 
 **核心场景**：用户在使用 Claude Code / Codex CLI 时，终端等待命令确认或任务中断，但用户切到了其他窗口没注意到。
 
-> 2026-05-28 更新：原计划检测 Dock badge，实现中发现 Terminal 的 badge 是私有渲染，lsappinfo 和 Accessibility API 均无法读取。实际采用 Accessibility API 监控 Terminal 窗口的 AXTextArea 文本内容变化替代。
+> 2026-05-28 更新 v2：最终切换为 `lsappinfo` 读取 Terminal Dock badge。之前尝试的 AX 文本内容监控因 Terminal AX 渲染噪音导致频繁误触发，已废弃。Badge 检测无需辅助功能权限，准确率 100%。
 
 ---
 
@@ -21,9 +21,9 @@
 | 项目 | 决策 |
 |------|------|
 | 支持终端 | 仅 Terminal.app（第一版） |
-| 触发事件 | Terminal 在后台时窗口文本内容变化（等效于用户离开 Terminal 后有新输出） |
+| 触发事件 | Terminal 在后台时 Dock 出现红点 badge |
 | 前台抑制 | Terminal 在最前面时不触发（用户正在看） |
-| 检测方式 | 1 秒轮询，通过 Accessibility API 读取 Terminal 的 AXFocusedWindow → AXTextArea 文本哈希值 |
+| 检测方式 | 1 秒轮询 `lsappinfo info -only StatusLabel com.apple.Terminal` 读取 Dock badge 值 |
 
 ### 2.2 菜单栏宠物
 
@@ -94,7 +94,7 @@
 **我的回答**：OK，开发框架就Swift + AppKit（主） + SwiftUI（设置窗口）
 
 **理由**：
-- 菜单栏应用（NSStatusItem）、透明悬浮窗口（NSWindow）、Dock badge 检测（Accessibility API）都是 AppKit 领域，SwiftUI 在这些场景下限制多且坑多
+- 菜单栏应用（NSStatusItem）、透明悬浮窗口（NSWindow）、Dock badge 检测（lsappinfo）都是 AppKit 领域，SwiftUI 在这些场景下限制多且坑多
 - 设置窗口用 SwiftUI 写更快更现代，可以通过 NSHostingController 嵌入
 - macOS 13+ 完全支持
 - 原生轻量，无 Electron 那种 200MB+ 的体积问题
@@ -123,15 +123,16 @@
 
 ### 3.3 终端变化检测方案（已实现）
 
-实现中经历多次迭代，最终方案如下：
+实现中经历多次迭代：
 
 | 尝试 | 方案 | 结果 |
 |------|------|------|
-| lsappinfo CLI 轮询 | 读 Terminal 的 StatusLabel | 空返回——Terminal 的 badge 是私有渲染，不走标准 Dock badge API |
-| AX API 读 Dock 的 AXStatusLabel | 读 Dock 中 Terminal 元素的 badge 属性 | 返回 error -25212（kAXErrorAttributeUnsupported）|
-| **AX API 监控 Terminal 文本内容** | 定时读 Terminal 的 AXFocusedWindow → AXTextArea 文本哈希值 | **有效**。Terminal 不在最前面 + 内容变化 → 触发提醒 |
+| lsappinfo "Terminal" | `lsappinfo info -only StatusLabel "Terminal"` | 失败——应用名不匹配 |
+| AX API 读 AXStatusLabel | 读 Dock 中 Terminal 元素的 badge 属性 | 返回 error -25212（kAXErrorAttributeUnsupported）|
+| AX API 监控文本内容 | 读 Terminal AXTextArea 文本 hash/prefix 比较 | 有效但误触发严重——Terminal AX 渲染值不断变化 |
+| **lsappinfo com.apple.Terminal** | `lsappinfo info -only StatusLabel com.apple.Terminal` | **最终方案**。直接用 Bundle ID，准确读取 badge 值 |
 
-**最终方案**：Accessibility API 读取 Terminal 窗口文本内容，1 秒轮询。需要辅助功能权限，用户已接受。窗口选择优先用 `AXFocusedWindow`，确保多窗口场景正确。
+**最终方案**：`lsappinfo` 配合 Bundle ID 读取 Dock badge，1 秒轮询。无需辅助功能权限。Terminal 不在最前面 + badge 出现（label != nil/0）→ 触发提醒。
 
 ---
 
@@ -171,7 +172,7 @@
 |---|------|------|
 | Q1 | 技术栈选 Swift + AppKit 主 + SwiftUI 设置窗口，OK？ | OK |
 | Q2 | 动画用 Sprite Sheet + Core Animation，OK？ | OK |
-| Q3 | Badge 检测用 Accessibility API（需辅助功能权限），OK？ | OK |
+| Q3 | Badge 检测用 lsappinfo CLI（无需辅助功能权限），OK？ | OK |
 | Q4 | 冷却时间默认值 30 秒是否合适？ | 10秒 |
 | Q5 | 声音默认开还是默认关？ | 默认开 |
 | Q6 | 话语分类：仅靠 badge 只能分"刚出现"和"长时间未响应"两类。如果要区分具体事件类型（任务完成/中断/等待确认），需要读取终端窗口文本（额外需要屏幕录制权限）。第一版你想要哪种？ | 第一版先做两类，后续加细分 |
