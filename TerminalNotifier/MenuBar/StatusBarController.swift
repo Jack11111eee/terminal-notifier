@@ -15,23 +15,27 @@ class StatusBarController {
     var onQuitClicked: (() -> Void)?
 
     init() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         menu = NSMenu()
 
         setupStatusItem()
         setupMenu()
+        print("[TerminalNotifier] Status bar item created. Button: \(statusItem.button != nil ? "OK" : "NIL")")
     }
 
     private func setupStatusItem() {
-        if let button = statusItem.button {
-            button.image = Self.createPixelCatIcon(size: Constants.menuBarIconSize)
-            button.image?.isTemplate = true
+        guard let button = statusItem.button else {
+            print("[TerminalNotifier] ERROR: statusItem.button is nil")
+            return
         }
+        button.image = Self.createColoredCatIcon(size: 22)
+        button.imagePosition = .imageOnly
+        print("[TerminalNotifier] Icon set on status bar button")
     }
 
     private func setupMenu() {
         let settingsItem = NSMenuItem(
-            title: NSLocalizedString("Settings...", comment: ""),
+            title: "Settings...",
             action: #selector(settingsAction),
             keyEquivalent: ","
         )
@@ -39,7 +43,7 @@ class StatusBarController {
         menu.addItem(settingsItem)
 
         let pauseItem = NSMenuItem(
-            title: NSLocalizedString("Pause Notifications", comment: ""),
+            title: "Pause Notifications",
             action: #selector(pauseAction),
             keyEquivalent: ""
         )
@@ -47,7 +51,7 @@ class StatusBarController {
         menu.addItem(pauseItem)
 
         let historyItem = NSMenuItem(
-            title: NSLocalizedString("Notification History", comment: ""),
+            title: "Notification History",
             action: #selector(historyAction),
             keyEquivalent: ""
         )
@@ -57,7 +61,7 @@ class StatusBarController {
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
-            title: NSLocalizedString("Quit Terminal Notifier", comment: ""),
+            title: "Quit Terminal Notifier",
             action: #selector(quitAction),
             keyEquivalent: "q"
         )
@@ -69,19 +73,14 @@ class StatusBarController {
 
     func updateIcon(state: MenuBarIconState) {
         DispatchQueue.main.async {
+            guard let button = self.statusItem.button else { return }
             switch state {
             case .normal:
-                if let button = self.statusItem.button {
-                    button.image = Self.createPixelCatIcon(size: Constants.menuBarIconSize)
-                    button.image?.isTemplate = true
-                }
+                button.image = Self.createColoredCatIcon(size: 22)
             case .notifying:
-                break
+                button.image = Self.createAlertCatIcon(size: 22)
             case .paused:
-                if let button = self.statusItem.button {
-                    button.image = Self.createPausedIcon(size: Constants.menuBarIconSize)
-                    button.image?.isTemplate = true
-                }
+                button.image = Self.createPausedIcon(size: 22)
             }
         }
     }
@@ -89,79 +88,89 @@ class StatusBarController {
     func updatePauseMenuItem(isPaused: Bool) {
         self.isPaused = isPaused
         if let pauseItem = menu.item(at: 1) {
-            pauseItem.title = isPaused
-                ? NSLocalizedString("Resume Notifications", comment: "")
-                : NSLocalizedString("Pause Notifications", comment: "")
+            pauseItem.title = isPaused ? "Resume Notifications" : "Pause Notifications"
         }
     }
 
-    @objc private func settingsAction() {
-        onSettingsClicked?()
-    }
-
+    @objc private func settingsAction() { onSettingsClicked?() }
     @objc private func pauseAction() {
         isPaused.toggle()
         updatePauseMenuItem(isPaused: isPaused)
         updateIcon(state: isPaused ? .paused : .normal)
         onPauseToggled?(isPaused)
     }
+    @objc private func historyAction() { onHistoryClicked?() }
+    @objc private func quitAction() { onQuitClicked?() }
 
-    @objc private func historyAction() {
-        onHistoryClicked?()
+    // MARK: - Colored Cat Icon (visible on any menu bar)
+
+    static func createColoredCatIcon(size: CGFloat) -> NSImage {
+        return drawColoredCat(size: size, isAlert: false, isPaused: false)
     }
 
-    @objc private func quitAction() {
-        onQuitClicked?()
-    }
-
-    // MARK: - Pixel Cat Icon (Placeholder)
-
-    static func createPixelCatIcon(size: CGFloat) -> NSImage {
-        return drawPixelCat(size: size, color: NSColor.black)
+    static func createAlertCatIcon(size: CGFloat) -> NSImage {
+        return drawColoredCat(size: size, isAlert: true, isPaused: false)
     }
 
     static func createPausedIcon(size: CGFloat) -> NSImage {
-        return drawPixelCat(size: size, color: NSColor.gray)
+        return drawColoredCat(size: size, isAlert: false, isPaused: true)
     }
 
-    private static func drawPixelCat(size: CGFloat, color: NSColor) -> NSImage {
+    private static func drawColoredCat(size: CGFloat, isAlert: Bool, isPaused: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size))
-        image.isTemplate = true
 
         image.lockFocus()
-        color.setFill()
 
-        let pixel = size / 9.0
+        let pixel = size / 11.0
+        let bodyColor: NSColor
+        let earColor: NSColor
 
-        // A simple 9x9 pixel art cat face
-        // Row 0: .........
-        // Row 1: ..*...*..
-        // Row 2: .*...*.*.
-        // Row 3: .*.**.*..
-        // Row 4: .*.***...
-        // Row 5: ..***....
-        // Row 6: ..*.*....
-        // Row 7: ..*.*....
-        // Row 8: .........
+        if isPaused {
+            bodyColor = NSColor.gray
+            earColor = NSColor.darkGray
+        } else if isAlert {
+            bodyColor = NSColor.systemRed
+            earColor = NSColor.red
+        } else {
+            bodyColor = NSColor(red: 1.0, green: 0.65, blue: 0.15, alpha: 1.0)   // orange
+            earColor = NSColor(red: 0.85, green: 0.40, blue: 0.10, alpha: 1.0)    // dark orange
+        }
 
-        let pixels: [(Int, Int)] = [
-            (2,1), (5,1),
-            (1,2), (4,2), (6,2),
-            (1,3), (3,3), (4,3), (6,3),
-            (1,4), (3,4), (4,4), (5,4),
-            (2,5), (3,5), (4,5),
-            (2,6), (4,6),
-            (2,7), (4,7),
+        // 11x11 pixel grid cat face
+        let rows: [String] = [
+            "...........",
+            "..EE...EE..",
+            ".EBOE.EOBE.",
+            ".EBBBEBBBE.",
+            "..BBBBBBB..",
+            "..BBK.BKB..",
+            ".BBBWWWBBB.",
+            ".BBBBBBBBB.",
+            ".BB.BB.BB..",
+            "..BBBBBBB..",
+            "..B.....B..",
         ]
 
-        for (col, row) in pixels {
-            let rect = NSRect(
-                x: CGFloat(col) * pixel,
-                y: CGFloat(8 - row) * pixel,
-                width: pixel,
-                height: pixel
-            )
-            rect.fill()
+        let colorMap: [Character: NSColor] = [
+            "E": earColor,
+            "B": bodyColor,
+            "O": NSColor.white,
+            "W": NSColor.white,
+            "K": NSColor.black,
+        ]
+
+        for (rowIndex, row) in rows.enumerated() {
+            for (colIndex, char) in row.enumerated() {
+                guard let color = colorMap[char] else { continue }
+                color.setFill()
+                let rect = NSRect(
+                    x: CGFloat(colIndex) * pixel,
+                    y: CGFloat(10 - rowIndex) * pixel,
+                    width: pixel,
+                    height: pixel
+                )
+                rect.fill()
+            }
         }
 
         image.unlockFocus()
