@@ -16,7 +16,7 @@ protocol TerminalContentMonitorDelegate: AnyObject {
 class TerminalContentMonitor {
     weak var delegate: TerminalContentMonitorDelegate?
     private var timer: Timer?
-    private var lastContentHash: Int?
+    private var lastContent: String?
     private var tickCount = 0
 
     private let maxRetries = 5
@@ -76,28 +76,31 @@ class TerminalContentMonitor {
     private func checkContent() {
         tickCount += 1
         let frontmost = isTerminalFrontmost()
-        let currentHash = terminalContentHash()
+        let currentContent = terminalContent()
 
         // Log every 5 ticks
         if tickCount % 5 == 1 {
-            dbg("tick #\(tickCount) frontmost=\(frontmost) hash=\(currentHash.map(String.init) ?? "nil") lastHash=\(lastContentHash.map(String.init) ?? "nil")")
+            let len = currentContent?.count ?? -1
+            dbg("tick #\(tickCount) frontmost=\(frontmost) contentLen=\(len) lastLen=\(lastContent?.count ?? -1)")
         }
 
         if frontmost {
-            lastContentHash = currentHash
+            lastContent = currentContent
             return
         }
 
-        guard let current = currentHash else {
-            if tickCount % 5 == 1 { dbg("no hash available (Terminal windows not found?)") }
+        guard let current = currentContent else {
+            if tickCount % 5 == 1 { dbg("no content (Terminal windows not found?)") }
             return
         }
 
-        if let last = lastContentHash, current != last {
-            dbg("CONTENT CHANGED! \(last) → \(current)")
+        // Only trigger when new text was appended to the end (real output),
+        // not when AX representation randomly changes (rendering noise).
+        if let last = lastContent, current != last, current.hasPrefix(last) {
+            dbg("CONTENT APPENDED! +\(current.count - last.count) chars")
             delegate?.terminalContentDidChange(self)
         }
-        lastContentHash = current
+        lastContent = current
     }
 
     private func isTerminalFrontmost() -> Bool {
@@ -105,7 +108,7 @@ class TerminalContentMonitor {
         return frontApp.bundleIdentifier == "com.apple.Terminal"
     }
 
-    private func terminalContentHash() -> Int? {
+    private func terminalContent() -> String? {
         guard let termApp = NSRunningApplication
             .runningApplications(withBundleIdentifier: "com.apple.Terminal").first else {
             return nil
@@ -143,7 +146,7 @@ class TerminalContentMonitor {
         guard AXUIElementCopyAttributeValue(textArea, "AXValue" as CFString, &value) == .success,
               let text = value as? String else { return nil }
 
-        return text.hashValue
+        return text
     }
 
     private func firstChild(of element: AXUIElement, role: String) -> AXUIElement? {
