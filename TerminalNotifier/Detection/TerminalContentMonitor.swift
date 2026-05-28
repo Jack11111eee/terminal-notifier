@@ -97,8 +97,13 @@ class TerminalContentMonitor {
         // Only trigger when new text was appended to the end (real output),
         // not when AX representation randomly changes (rendering noise).
         if let last = lastContent, current != last, current.hasPrefix(last) {
-            dbg("CONTENT APPENDED! +\(current.count - last.count) chars")
-            delegate?.terminalContentDidChange(self)
+            let added = current.count - last.count
+            // Real terminal output always adds full lines (newline + content).
+            // AX noise occasionally appends 1-2 control characters — ignore those.
+            if added >= 3 {
+                dbg("CONTENT APPENDED! +\(added) chars")
+                delegate?.terminalContentDidChange(self)
+            }
         }
         lastContent = current
     }
