@@ -19,6 +19,8 @@ class TerminalContentMonitor {
     private var lastContentHash: Int?
     private var tickCount = 0
 
+    private let maxRetries = 5
+
     func startMonitoring() {
         try? FileManager.default.removeItem(atPath: "/tmp/terminal-notifier-debug.log")
         FileManager.default.createFile(atPath: "/tmp/terminal-notifier-debug.log", contents: nil)
@@ -31,34 +33,27 @@ class TerminalContentMonitor {
         }
 
         dbg("AX not trusted, prompting")
+        promptAndRetry(attempt: 1)
+    }
+
+    private func promptAndRetry(attempt: Int) {
+        guard attempt <= maxRetries else {
+            dbg("AX still not trusted after \(maxRetries) attempts, giving up")
+            return
+        }
+
         let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(opts)
 
-        // Keep retrying — user might take time to find and toggle the permission
-        scheduleRetry(attempt: 1)
-    }
-
-    private func scheduleRetry(attempt: Int) {
-        let delay: TimeInterval
-        switch attempt {
-        case 1:  delay = 2
-        case 2:  delay = 3
-        case 3:  delay = 5
-        default: delay = 5  // keep checking every 5s
-        }
+        let delay: TimeInterval = attempt <= 2 ? TimeInterval(attempt + 1) : 5
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             if AXIsProcessTrusted() {
-                dbg("AX granted after \(attempt) retries, starting")
+                dbg("AX granted after attempt \(attempt), starting")
                 self.startPolling()
             } else {
                 dbg("AX retry #\(attempt) — still not trusted")
-                // Re-prompt in case the dialog was dismissed
-                if attempt % 3 == 0 {
-                    let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
-                    AXIsProcessTrustedWithOptions(opts)
-                }
-                self.scheduleRetry(attempt: attempt + 1)
+                self.promptAndRetry(attempt: attempt + 1)
             }
         }
     }
