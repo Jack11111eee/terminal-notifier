@@ -42,19 +42,21 @@ class TerminalContentMonitor {
             return
         }
 
+        // Always check silently first — permission may have been granted since last retry
+        if AXIsProcessTrusted() {
+            dbg("AX already trusted (detected in retry), starting")
+            startPolling()
+            return
+        }
+
+        dbg("AX prompting attempt \(attempt)/\(maxRetries)")
         let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(opts)
 
         let delay: TimeInterval = attempt <= 2 ? TimeInterval(attempt + 1) : 5
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
-            if AXIsProcessTrusted() {
-                dbg("AX granted after attempt \(attempt), starting")
-                self.startPolling()
-            } else {
-                dbg("AX retry #\(attempt) — still not trusted")
-                self.promptAndRetry(attempt: attempt + 1)
-            }
+            self.promptAndRetry(attempt: attempt + 1)
         }
     }
 
