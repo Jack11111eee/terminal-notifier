@@ -3,7 +3,6 @@ import Foundation
 enum NotificationState: Equatable {
     case idle
     case detected(count: Int)
-    case animatingIn
     case showing(count: Int)
     case animatingOut
 }
@@ -33,11 +32,7 @@ class NotificationStateMachine {
     private var isInCooldown: Bool = false
     private var cooldownTimer: Timer?
     private let messageProvider = MessageProvider()
-    private let locale: String
-
-    init(locale: String) {
-        self.locale = locale
-    }
+    private var locale: String { PreferencesManager.shared.resolvedLocale }
 
     func handleEvent(_ event: NotificationEvent) {
         let oldState = currentState
@@ -65,6 +60,9 @@ class NotificationStateMachine {
                 delegate?.stateMachine(self, shouldShowOverlayWithMessage: msg)
             }
 
+        case (.detected, .badgeDetected):
+            pendingCount += 1
+
         case (.detected, .dropAnimationCompleted):
             currentState = .showing(count: pendingCount)
             delegate?.stateMachine(self, didTransitionTo: currentState)
@@ -84,12 +82,9 @@ class NotificationStateMachine {
 
         case (.animatingOut, .jumpBackCompleted):
             currentState = .idle
+            pendingCount = 0
             badgeFirstDetectedAt = nil
             startCooldown()
-            delegate?.stateMachine(self, didTransitionTo: currentState)
-
-        case (.animatingIn, .dropAnimationCompleted):
-            currentState = .showing(count: pendingCount)
             delegate?.stateMachine(self, didTransitionTo: currentState)
 
         case (.idle, .badgeCleared):
@@ -99,11 +94,13 @@ class NotificationStateMachine {
         default:
             break
         }
+#if DEBUG
         if String(describing: oldState) != String(describing: currentState) {
             print("[SM] \(oldState) + \(event) → \(currentState)")
         } else {
             print("[SM] \(oldState) + \(event) → (no transition)")
         }
+#endif
     }
 
     private func messageForShowing(count: Int, badgeAge: TimeInterval) -> String {

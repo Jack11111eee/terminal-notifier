@@ -210,7 +210,6 @@ protocol NotificationStateMachineDelegate: AnyObject {
 enum NotificationState {
     case idle
     case detected(count: Int)
-    case animatingIn
     case showing(count: Int)
     case animatingOut
 }
@@ -239,10 +238,6 @@ class NotificationStateMachine {
                     badgeDetected
         idle ──────────────────────► detected(1)
          ▲                                │
-         │                                │ (自动触发，检查冷却)
-         │                                ▼
-         │                          animatingIn
-         │                                │
          │                                │ dropAnimationCompleted
          │                                ▼
          │    jumpBackCompleted     showing(N) ◄─── badgeDetected (count++)
@@ -267,7 +262,6 @@ class OverlayWindowController {
 
     func show(on screen: NSScreen,
               message: String,
-              menuBarIconFrame: NSRect,
               onDismiss: @escaping () -> Void)
 
     func updateMessage(_ message: String)
@@ -542,7 +536,7 @@ class SoundManager {
 
     func playNotificationSound() {
         guard PreferencesManager.shared.soundEnabled else { return }
-        sound = NSSound(named: "notify")
+        sound = NSSound(named: "Glass")   // 系统音；nil 时回退 NSSound.beep()
         sound?.play()
     }
 }
@@ -583,7 +577,7 @@ class SoundManager {
 1. `TerminalContentMonitor` 每秒执行 `lsappinfo`，检测到 Terminal 后台 badge 出现 → 通知 `AppDelegate`
 2. `AppDelegate` 检查 `PreferencesManager`（是否启用、是否冷却中、是否免打扰）
 3. 通过 → 向 `StateMachine` 发送 `.badgeDetected`
-4. `StateMachine` 转为 `.detected` → `.animatingIn`
+4. `StateMachine` 转为 `.detected`
 5. `AppDelegate` 调 `TerminalScreenLocator` 定位屏幕
 6. `AppDelegate` 调 `MessageProvider` 获取随机话语
 7. `OverlayWindowController.show()` → 创建窗口 → 掉落动画 → 显示气泡

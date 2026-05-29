@@ -2,11 +2,13 @@ import AppKit
 import ServiceManagement
 
 func tnLog(_ msg: String) {
+#if DEBUG
     if let fh = FileHandle(forWritingAtPath: "/tmp/terminal-notifier-debug.log"),
        let data = "[APP] \(msg)\n".data(using: .utf8) {
         fh.seekToEndOfFile()
         fh.write(data)
     }
+#endif
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -26,7 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController = StatusBarController()
         contentMonitor = TerminalContentMonitor()
         settingsController = SettingsWindowController()
-        stateMachine = NotificationStateMachine(locale: preferences.resolvedLocale)
+        stateMachine = NotificationStateMachine()
 
         contentMonitor.delegate = self
         stateMachine.delegate = self
@@ -79,9 +81,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let screen = TerminalScreenLocator.locateScreen()
-        let menuBarFrame = statusBarController.menuBarIconFrame ?? .zero
         tnLog("showOverlay: calling overlayController.show screen=\(screen)")
-        overlayController.show(on: screen, message: message, menuBarIconFrame: menuBarFrame)
+        overlayController.show(on: screen, message: message)
         soundManager.playNotificationSound()
         tnLog("showOverlay: done")
     }
@@ -126,7 +127,7 @@ extension AppDelegate: NotificationStateMachineDelegate {
         tnLog("stateMachine → \(state)")
         switch state {
         case .idle: statusBarController.updateIcon(state: .normal)
-        case .detected, .animatingIn: statusBarController.updateIcon(state: .notifying)
+        case .detected: statusBarController.updateIcon(state: .notifying)
         case .showing: break
         case .animatingOut: break
         }

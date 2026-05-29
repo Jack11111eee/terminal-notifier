@@ -6,9 +6,13 @@ class SoundManager {
     func playNotificationSound() {
         guard PreferencesManager.shared.soundEnabled else { return }
         if sound == nil {
-            sound = NSSound(named: "notify")
+            sound = NSSound(named: "Glass")
         }
-        sound?.stop()
-        sound?.play()
+        guard let sound else {
+            NSSound.beep()
+            return
+        }
+        sound.stop()
+        sound.play()
     }
 }

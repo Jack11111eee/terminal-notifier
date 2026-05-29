@@ -26,8 +26,7 @@ class OverlayWindowController {
     var onDismissRequested: (() -> Void)?
 
     func show(on screen: NSScreen,
-              message: String,
-              menuBarIconFrame: NSRect) {
+              message: String) {
 
         if window != nil { forceClose() }
         isDismissing = false

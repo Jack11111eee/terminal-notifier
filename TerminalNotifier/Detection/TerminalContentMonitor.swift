@@ -1,11 +1,13 @@
 import AppKit
 
 func dbg(_ msg: String) {
+#if DEBUG
     if let fh = FileHandle(forWritingAtPath: "/tmp/terminal-notifier-debug.log"),
        let data = "[CM] \(msg)\n".data(using: .utf8) {
         fh.seekToEndOfFile()
         fh.write(data)
     }
+#endif
 }
 
 protocol TerminalContentMonitorDelegate: AnyObject {
@@ -19,8 +21,10 @@ class TerminalContentMonitor {
     private var tickCount = 0
 
     func startMonitoring() {
+#if DEBUG
         try? FileManager.default.removeItem(atPath: "/tmp/terminal-notifier-debug.log")
         FileManager.default.createFile(atPath: "/tmp/terminal-notifier-debug.log", contents: nil)
+#endif
         dbg("startMonitoring (badge-based, no AX needed)")
 
         // Capture initial badge state without triggering
@@ -40,8 +44,16 @@ class TerminalContentMonitor {
     private func checkBadge() {
         tickCount += 1
         let frontmost = isTerminalFrontmost()
-        let badge = readBadge()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let badge = self.readBadge()
+            DispatchQueue.main.async { [weak self] in
+                self?.processBadge(badge, frontmost: frontmost)
+            }
+        }
+    }
 
+    private func processBadge(_ badge: String?, frontmost: Bool) {
         if tickCount % 5 == 1 {
             dbg("tick #\(tickCount) frontmost=\(frontmost) badge=\(badge ?? "nil") lastBadge=\(lastBadgeLabel ?? "nil")")
         }

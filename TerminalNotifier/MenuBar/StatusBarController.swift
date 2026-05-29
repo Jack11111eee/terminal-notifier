@@ -4,10 +4,7 @@ class StatusBarController {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     private var isPaused: Bool = false
-
-    var menuBarIconFrame: NSRect? {
-        return statusItem.button?.window?.convertToScreen(statusItem.button?.bounds ?? .zero)
-    }
+    private var pauseMenuItem: NSMenuItem?
 
     var onSettingsClicked: (() -> Void)?
     var onPauseToggled: ((Bool) -> Void)?
@@ -49,6 +46,7 @@ class StatusBarController {
         )
         pauseItem.target = self
         menu.addItem(pauseItem)
+        pauseMenuItem = pauseItem
 
         let historyItem = NSMenuItem(
             title: "Notification History",
@@ -87,7 +85,7 @@ class StatusBarController {
 
     func updatePauseMenuItem(isPaused: Bool) {
         self.isPaused = isPaused
-        if let pauseItem = menu.item(at: 1) {
+        if let pauseItem = pauseMenuItem {
             pauseItem.title = isPaused ? "Resume Notifications" : "Pause Notifications"
         }
     }
