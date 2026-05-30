@@ -323,7 +323,7 @@ class OverlayWindow: NSWindow {
 ```swift
 class PetSpriteView: NSView {
     var spriteSheet: NSImage?
-    var frameSize: NSSize = NSSize(width: 300, height: 300)
+    var frameSize: NSSize = NSSize(width: 320, height: 320)
     var currentFrame: Int = 0
 
     func setAnimation(_ animation: PetAnimation)
@@ -606,10 +606,10 @@ class SoundManager {
 | 动作 | 文件 | 帧数 | 单帧尺寸 | Sheet 布局 | 说明 |
 |------|------|------|----------|-----------|------|
 | idle | cat_idle.png | 1 | 18×18 | 单帧 | 菜单栏图标 |
-| drop | cat_drop.png | 4 | 300×300 | 1×4 横排 | 掉落姿势变化 |
-| land | cat_land.png | 3 | 300×300 | 1×3 横排 | 落地缓冲 |
-| talk | cat_talk.png | 2 | 300×300 | 1×2 横排 | 嘴巴开合 |
-| jump | cat_jump.png | 4 | 300×300 | 1×4 横排 | 跳回姿势 |
+| drop | cat_drop.png | 4 | 320×320 | 1×4 横排 | 掉落姿势变化 |
+| land | cat_land.png | 3 | 320×320 | 1×3 横排 | 落地缓冲 |
+| talk | cat_talk.png | 2 | 320×320 | 1×2 横排 | 嘴巴开合 |
+| jump | cat_jump.png | 4 | 320×320 | 1×4 横排 | 跳回姿势 |
 
 **第一版：** 用代码绘制占位像素猫（NSBezierPath），跑通后替换正式素材。
 
