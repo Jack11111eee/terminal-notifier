@@ -59,7 +59,22 @@ class SpeechBubbleView: NSView {
             .paragraphStyle: textStyle
         ]
 
-        let textRect = bubbleRect.insetBy(dx: 20, dy: 12)
-        (text as NSString).draw(in: textRect, withAttributes: textAttrs)
+        // 按实际文字高度在气泡内垂直居中绘制,避免两行中文(行高较大)底部被矩形裁掉。
+        let hInset: CGFloat = 20
+        let availableWidth = bubbleRect.width - hInset * 2
+        let attributed = NSAttributedString(string: text, attributes: textAttrs)
+        let drawOptions: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+        let measured = attributed.boundingRect(
+            with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
+            options: drawOptions
+        )
+        let textHeight = ceil(measured.height)
+        let textRect = NSRect(
+            x: bubbleRect.minX + hInset,
+            y: bubbleRect.midY - textHeight / 2,
+            width: availableWidth,
+            height: textHeight
+        )
+        attributed.draw(with: textRect, options: drawOptions)
     }
 }
