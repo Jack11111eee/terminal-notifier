@@ -477,7 +477,8 @@ class PreferencesManager: ObservableObject {
     @AppStorage("selectedPet")          var selectedPet: String = "pixel_cat"
 
     var isInDNDPeriod: Bool { get }
-    var resolvedLocale: String { get }
+    var resolvedLocale: String { get }                  // = resolveLocale(language)
+    static func resolveLocale(_ language: String) -> String  // 设置界面与通知话语共用
 }
 ```
 
@@ -500,7 +501,7 @@ struct SettingsView: View {
 ```
 
 **通用 Tab：** 启用/禁用、开机自启、语言选择、宠物选择（预留）
-**通知 Tab：** 声音开关、冷却时间滑块、免打扰时段、消失后跳转终端
+**通知 Tab：** 声音开关、冷却时间下拉（5/10/15/30/60/120 秒）、免打扰时段、消失后跳转终端
 
 ### 3.15 Settings / SettingsWindowController
 

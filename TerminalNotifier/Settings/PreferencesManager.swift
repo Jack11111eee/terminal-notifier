@@ -27,7 +27,11 @@ class PreferencesManager: ObservableObject {
         }
     }
 
-    var resolvedLocale: String {
+    var resolvedLocale: String { Self.resolveLocale(language) }
+
+    /// 把语言偏好("system"/"zh"/"en")解析成实际语言("zh"/"en")。
+    /// 设置界面与通知话语共用此处,确保两边显示语言一致。
+    static func resolveLocale(_ language: String) -> String {
         switch language {
         case "zh": return "zh"
         case "en": return "en"
