@@ -103,75 +103,36 @@ class StatusBarController {
     // MARK: - Colored Cat Icon (visible on any menu bar)
 
     static func createColoredCatIcon(size: CGFloat) -> NSImage {
-        return drawColoredCat(size: size, isAlert: false, isPaused: false)
+        return menuBarCatImage(size: size, source: normalImage)
     }
 
     static func createAlertCatIcon(size: CGFloat) -> NSImage {
-        return drawColoredCat(size: size, isAlert: true, isPaused: false)
+        return menuBarCatImage(size: size, source: notifyingImage)
     }
 
     static func createPausedIcon(size: CGFloat) -> NSImage {
-        return drawColoredCat(size: size, isAlert: false, isPaused: true)
+        return menuBarCatImage(size: size, source: pausedImage)
     }
 
-    private static func drawColoredCat(size: CGFloat, isAlert: Bool, isPaused: Bool) -> NSImage {
+    // 菜单栏猫素材(11×11 设计,@2x PNG),三态各一张。加载一次复用。
+    private static let normalImage = loadCat("MenuBarCat")
+    private static let notifyingImage = loadCat("MenuBarCatNotifying")
+    private static let pausedImage = loadCat("MenuBarCatPaused")
+
+    private static func loadCat(_ name: String) -> NSImage? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    private static func menuBarCatImage(size: CGFloat, source: NSImage?) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size))
 
         image.lockFocus()
-        NSGraphicsContext.current?.cgContext.setShouldAntialias(false)
-
-        let pixel = size / 11.0
-        let bodyColor: NSColor
-        let earColor: NSColor
-
-        if isPaused {
-            bodyColor = NSColor.gray
-            earColor = NSColor.darkGray
-        } else if isAlert {
-            bodyColor = NSColor.systemRed
-            earColor = NSColor.red
-        } else {
-            bodyColor = NSColor(red: 1.0, green: 0.65, blue: 0.15, alpha: 1.0)   // orange
-            earColor = NSColor(red: 0.85, green: 0.40, blue: 0.10, alpha: 1.0)    // dark orange
+        if let ctx = NSGraphicsContext.current {
+            ctx.imageInterpolation = .none
+            ctx.cgContext.setShouldAntialias(false)
         }
-
-        // 11x11 pixel grid cat face
-        let rows: [String] = [
-            "...........",
-            "..EE...EE..",
-            ".EBOE.EOBE.",
-            ".EBBBEBBBE.",
-            "..BBBBBBB..",
-            "..BBK.BKB..",
-            ".BBBWWWBBB.",
-            ".BBBBBBBBB.",
-            ".BB.BB.BB..",
-            "..BBBBBBB..",
-            "..B.....B..",
-        ]
-
-        let colorMap: [Character: NSColor] = [
-            "E": earColor,
-            "B": bodyColor,
-            "O": NSColor.white,
-            "W": NSColor.white,
-            "K": NSColor.black,
-        ]
-
-        for (rowIndex, row) in rows.enumerated() {
-            for (colIndex, char) in row.enumerated() {
-                guard let color = colorMap[char] else { continue }
-                color.setFill()
-                let rect = NSRect(
-                    x: CGFloat(colIndex) * pixel,
-                    y: CGFloat(10 - rowIndex) * pixel,
-                    width: pixel,
-                    height: pixel
-                )
-                rect.fill()
-            }
-        }
-
+        source?.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
         image.unlockFocus()
         return image
     }

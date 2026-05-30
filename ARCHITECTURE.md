@@ -15,7 +15,7 @@ TerminalNotifier/
 │   │   ├── AppDelegate.swift                  # 组装所有模块
 │   │   └── Constants.swift                    # 全局常量
 │   ├── MenuBar/
-│   │   └── StatusBarController.swift          # 菜单栏彩色像素猫图标 + 下拉菜单
+│   │   └── StatusBarController.swift          # 菜单栏猫图标（normal/notifying/paused 三态各一张 PNG）+ 下拉菜单
 │   ├── Detection/
 │   │   ├── TerminalContentMonitor.swift       # lsappinfo 轮询 Terminal Dock badge
 │   │   ├── ClaudeCodeMonitor.swift            # 轮询 Claude Code hook 投放的事件标记文件
@@ -27,7 +27,7 @@ TerminalNotifier/
 │   ├── Overlay/
 │   │   ├── OverlayWindowController.swift      # 透明悬浮窗管理
 │   │   ├── OverlayContentView.swift           # 主容器视图（宠物 + 气泡）
-│   │   ├── PetSpriteView.swift                # 像素猫渲染（代码绘制的彩色像素猫）
+│   │   ├── PetSpriteView.swift                # 像素猫渲染（加载 PetCat.png，最近邻绘制）
 │   │   └── SpeechBubbleView.swift             # 漫画气泡框
 │   ├── Animation/
 │   │   ├── DropBounceAnimator.swift           # 掉落 + 弹跳动画
@@ -43,8 +43,13 @@ TerminalNotifier/
 │   │   └── PreferencesManager.swift           # UserDefaults 读写
 │   ├── History/
 │   │   └── NotificationHistoryManager.swift   # 通知历史存储
-│   └── Sound/
-│       └── SoundManager.swift                 # 音效播放
+│   ├── Sound/
+│   │   └── SoundManager.swift                 # 音效播放
+│   └── Resources/
+│       ├── PetCat.png                         # 悬浮窗大猫素材（16×16 像素图，@2x）
+│       ├── MenuBarCat.png                     # 菜单栏小猫·normal（11×11，@2x）
+│       ├── MenuBarCatNotifying.png            # 菜单栏小猫·notifying（红）
+│       └── MenuBarCatPaused.png               # 菜单栏小猫·paused（灰）
 ├── build.sh                                   # 编译 + TerminalNotifierDev 证书签名 + 安装到 /Applications
 └── README.md
 ```
@@ -611,7 +616,7 @@ class SoundManager {
 | talk | cat_talk.png | 2 | 320×320 | 1×2 横排 | 嘴巴开合 |
 | jump | cat_jump.png | 4 | 320×320 | 1×4 横排 | 跳回姿势 |
 
-**第一版：** 用代码绘制占位像素猫（NSBezierPath），跑通后替换正式素材。
+**第一版（占位方案已废弃）：** 曾用代码绘制的字符网格占位像素猫跑通；现已替换为 PNG 素材（`PetCat.png` / `MenuBarCat.png`），运行时由 `Bundle.main` 加载并最近邻渲染。
 
 ---
 
