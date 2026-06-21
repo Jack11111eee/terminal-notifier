@@ -138,5 +138,5 @@
 ## 系统要求
 
 - macOS 13 Ventura 及以上
-- Apple Silicon 或 Intel Mac
+- Apple Silicon Mac
 - Terminal.app（系统自带）

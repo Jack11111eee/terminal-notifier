@@ -8,8 +8,13 @@ APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+INSTALL="${INSTALL:-0}"
 
 echo "=== Building $APP_NAME ==="
+echo "Target: arm64-apple-macosx13.0"
+echo "Signing identity: $SIGN_IDENTITY"
+echo "Install to /Applications: $INSTALL"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$MACOS_DIR"
@@ -36,15 +41,19 @@ cp "$PROJECT_DIR/TerminalNotifier/Messages/"*.json "$RESOURCES_DIR/"
 cp "$PROJECT_DIR/TerminalNotifier/Resources/"*.png "$RESOURCES_DIR/"
 cp "$PROJECT_DIR/TerminalNotifier/Resources/"*.icns "$RESOURCES_DIR/"
 
-echo "Signing with TerminalNotifierDev certificate..."
-codesign --force --deep --sign "TerminalNotifierDev" "$APP_BUNDLE"
+echo "Signing app bundle..."
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 
-echo "Copying to /Applications..."
-cp -R "$APP_BUNDLE" /Applications/
+if [[ "$INSTALL" == "1" ]]; then
+    echo "Copying to /Applications..."
+    cp -R "$APP_BUNDLE" /Applications/
+fi
 
 echo ""
 echo "=== Build complete ==="
 echo "App bundle: $APP_BUNDLE"
-echo "Installed:  /Applications/$APP_NAME.app"
+if [[ "$INSTALL" == "1" ]]; then
+    echo "Installed:  /Applications/$APP_NAME.app"
+fi
 echo ""
-echo "To run: open /Applications/$APP_NAME.app"
+echo "To run: open \"$APP_BUNDLE\""

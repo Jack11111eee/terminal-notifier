@@ -30,30 +30,38 @@ enum ClaudeHookManager {
 
     // MARK: - 公开接口
 
-    static func install() {
-        var settings = loadSettings()
-        var hooks = (settings["hooks"] as? [String: Any]) ?? [:]
+    @discardableResult
+    static func install() -> Bool {
+        guard var settings = loadSettings() else { return false }
+        guard var hooks = loadHooks(from: settings) else { return false }
+        guard let notificationGroups = loadHookGroups(from: hooks, event: "Notification"),
+              let stopGroups = loadHookGroups(from: hooks, event: "Stop") else {
+            return false
+        }
 
         hooks["Notification"] = ensureEntry(
-            in: hooks["Notification"] as? [[String: Any]] ?? [],
+            in: notificationGroups,
             matcher: "permission_prompt",
             command: needsConfirmCommand)
         hooks["Stop"] = ensureEntry(
-            in: hooks["Stop"] as? [[String: Any]] ?? [],
+            in: stopGroups,
             matcher: nil,
             command: doneCommand)
 
         settings["hooks"] = hooks
-        save(settings)
+        return save(settings)
     }
 
-    static func uninstall() {
-        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return }
-        var settings = loadSettings()
-        guard var hooks = settings["hooks"] as? [String: Any] else { return }
+    @discardableResult
+    static func uninstall() -> Bool {
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return true }
+        guard var settings = loadSettings() else { return false }
+        guard settings["hooks"] != nil else { return true }
+        guard var hooks = loadHooks(from: settings) else { return false }
 
         for event in ["Notification", "Stop"] {
-            guard let groups = hooks[event] as? [[String: Any]] else { continue }
+            guard let groups = loadHookGroups(from: hooks, event: event) else { return false }
+            if groups.isEmpty, hooks[event] == nil { continue }
             let kept = groups.filter { !groupContainsMarker($0) }
             if kept.isEmpty { hooks.removeValue(forKey: event) }
             else { hooks[event] = kept }
@@ -61,7 +69,7 @@ enum ClaudeHookManager {
 
         if hooks.isEmpty { settings.removeValue(forKey: "hooks") }
         else { settings["hooks"] = hooks }
-        save(settings)
+        return save(settings)
     }
 
     // MARK: - 结构操作
@@ -81,34 +89,80 @@ enum ClaudeHookManager {
         return hooks.contains { ($0["command"] as? String)?.contains(Constants.claudeHookMarker) == true }
     }
 
-    // MARK: - 读写
-
-    private static func loadSettings() -> [String: Any] {
-        guard let data = try? Data(contentsOf: settingsURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return [:] }
-        return json
+    private static func loadHooks(from settings: [String: Any]) -> [String: Any]? {
+        guard let hooks = settings["hooks"] else { return [:] }
+        guard let hooks = hooks as? [String: Any] else {
+            print("[TerminalNotifier] settings.json 中 hooks 不是 JSON object，已取消写入")
+            return nil
+        }
+        return hooks
     }
 
-    private static func save(_ settings: [String: Any]) {
-        backupIfPresent()
+    private static func loadHookGroups(from hooks: [String: Any], event: String) -> [[String: Any]]? {
+        guard let groups = hooks[event] else { return [] }
+        guard let groups = groups as? [[String: Any]] else {
+            print("[TerminalNotifier] settings.json 中 hooks.\(event) 不是 hook group array，已取消写入")
+            return nil
+        }
+        return groups
+    }
+
+    // MARK: - 读写
+
+    private static func loadSettings() -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return [:] }
+
+        do {
+            let data = try Data(contentsOf: settingsURL)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("[TerminalNotifier] settings.json 顶层不是 JSON object，已取消写入: \(settingsURL.path)")
+                return nil
+            }
+            return json
+        } catch {
+            print("[TerminalNotifier] 读取 settings.json 失败，已取消写入: \(error)")
+            return nil
+        }
+    }
+
+    private static func save(_ settings: [String: Any]) -> Bool {
+        guard backupIfPresent() else { return false }
         do {
             try FileManager.default.createDirectory(
                 at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try JSONSerialization.data(
                 withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: settingsURL, options: .atomic)
+            return true
         } catch {
             print("[TerminalNotifier] 写入 settings.json 失败: \(error)")
+            return false
         }
     }
 
-    private static func backupIfPresent() {
-        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return }
+    private static func backupIfPresent() -> Bool {
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return true }
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyyMMdd-HHmmss"
-        let backup = settingsURL.deletingLastPathComponent()
-            .appendingPathComponent("settings.json.tn-backup-\(fmt.string(from: Date()))")
-        try? FileManager.default.copyItem(at: settingsURL, to: backup)
+        let backup = availableBackupURL(timestamp: fmt.string(from: Date()))
+        do {
+            try FileManager.default.copyItem(at: settingsURL, to: backup)
+            return true
+        } catch {
+            print("[TerminalNotifier] 备份 settings.json 失败，已取消写入: \(error)")
+            return false
+        }
+    }
+
+    private static func availableBackupURL(timestamp: String) -> URL {
+        let directory = settingsURL.deletingLastPathComponent()
+        let baseName = "settings.json.tn-backup-\(timestamp)"
+        var candidate = directory.appendingPathComponent(baseName)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(baseName)-\(suffix)")
+            suffix += 1
+        }
+        return candidate
     }
 }
