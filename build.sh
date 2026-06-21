@@ -46,7 +46,8 @@ codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 
 if [[ "$INSTALL" == "1" ]]; then
     echo "Copying to /Applications..."
-    cp -R "$APP_BUNDLE" /Applications/
+    rm -rf "/Applications/$APP_NAME.app"
+    ditto "$APP_BUNDLE" "/Applications/$APP_NAME.app"
 fi
 
 echo ""
