@@ -84,7 +84,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         contentMonitor.startMonitoring()
         // 持久化开启时，自愈式确保 hook 已安装并启动监控。
         if preferences.claudeCodeEnabled {
-            ClaudeHookManager.install()
+            if !ClaudeHookManager.install() {
+                print("[TerminalNotifier] Claude Code hook install failed")
+            }
             claudeMonitor.startMonitoring()
         }
     }
@@ -98,10 +100,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 切换 Claude Code 状态检测：安装/卸载 hook + 启停监控。
     private func setClaudeCodeEnabled(_ enabled: Bool) {
         if enabled {
-            ClaudeHookManager.install()
+            if !ClaudeHookManager.install() {
+                print("[TerminalNotifier] Claude Code hook install failed")
+            }
             claudeMonitor.startMonitoring()
         } else {
-            ClaudeHookManager.uninstall()
+            if !ClaudeHookManager.uninstall() {
+                print("[TerminalNotifier] Claude Code hook uninstall failed")
+            }
             claudeMonitor.stopMonitoring()
         }
     }
