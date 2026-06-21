@@ -15,7 +15,10 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
-SOURCES=$(find "$PROJECT_DIR/TerminalNotifier" -name "*.swift" -print0 | xargs -0 echo)
+SOURCES=()
+while IFS= read -r -d '' source_file; do
+    SOURCES+=("$source_file")
+done < <(find "$PROJECT_DIR/TerminalNotifier" -name "*.swift" -print0)
 
 echo "Compiling Swift sources..."
 swiftc \
@@ -25,12 +28,13 @@ swiftc \
     -framework ServiceManagement \
     -target arm64-apple-macosx13.0 \
     -O \
-    $SOURCES
+    "${SOURCES[@]}"
 
 echo "Copying Info.plist..."
 cp "$PROJECT_DIR/TerminalNotifier/Info.plist" "$CONTENTS/Info.plist"
 cp "$PROJECT_DIR/TerminalNotifier/Messages/"*.json "$RESOURCES_DIR/"
 cp "$PROJECT_DIR/TerminalNotifier/Resources/"*.png "$RESOURCES_DIR/"
+cp "$PROJECT_DIR/TerminalNotifier/Resources/"*.icns "$RESOURCES_DIR/"
 
 echo "Signing with TerminalNotifierDev certificate..."
 codesign --force --deep --sign "TerminalNotifierDev" "$APP_BUNDLE"
