@@ -3,13 +3,20 @@ import AppKit
 /// 监听 Claude Code hook 投放的事件标记文件。
 ///
 /// hook（注册在 ~/.claude/settings.json）在「需要确认 / 对话完成」时，
-/// 用 mktemp 在 `Constants.claudeEventsDir` 投放一个标记文件（文件名 `.` 之前
-/// 为事件类型）。本监控每秒轮询该目录，消费（删除）标记文件并回调 delegate。
+/// 用 mktemp 在 `Constants.claudeEventsDir` 投放一个 JSON 标记文件。本监控每秒
+/// 轮询该目录，消费（删除）标记文件并回调 delegate。
 ///
-/// 与 TerminalContentMonitor 一致，仅在 Terminal 不在最前台时才提醒
-/// （前台时用户正在看，无需打扰）。
+/// Terminal 在后台时沿用提醒；Terminal 在前台时，仅当标记能映射到非最上层
+/// Terminal 窗口时才提醒。
 protocol ClaudeCodeMonitorDelegate: AnyObject {
-    func claudeCodeMonitor(_ monitor: ClaudeCodeMonitor, didEmit category: MessageProvider.Category)
+    func claudeCodeMonitor(_ monitor: ClaudeCodeMonitor, didEmit event: AgentNotificationEvent)
+}
+
+struct AgentNotificationEvent {
+    let category: MessageProvider.Category
+    let source: NotificationSource
+    let tty: String?
+    let targetWindow: TerminalWindowInfo?
 }
 
 class ClaudeCodeMonitor {
@@ -45,11 +52,21 @@ class ClaudeCodeMonitor {
     private func poll() {
         let frontmost = isTerminalFrontmost()
         for url in markerFiles() {
-            let category = Self.category(forMarker: url.lastPathComponent)
+            let marker = Self.marker(for: url)
             try? FileManager.default.removeItem(at: url)
-            // 前台抑制：Terminal 正在最前面时消费掉标记但不提醒。
-            guard !frontmost, let category else { continue }
-            delegate?.claudeCodeMonitor(self, didEmit: category)
+            guard let category = marker.category else { continue }
+
+            let target = marker.tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
+            if frontmost {
+                guard let target, !TerminalWindowRegistry.isTopTerminalWindow(target) else {
+                    continue
+                }
+            }
+            delegate?.claudeCodeMonitor(self, didEmit: AgentNotificationEvent(
+                category: category,
+                source: .claudeCode,
+                tty: marker.tty,
+                targetWindow: target))
         }
     }
 
@@ -60,14 +77,35 @@ class ClaudeCodeMonitor {
             options: .skipsHiddenFiles)) ?? []
     }
 
-    /// 文件名 `<type>.XXXXXX` → 事件类型 → 话语分类。
-    private static func category(forMarker filename: String) -> MessageProvider.Category? {
-        let type = filename.components(separatedBy: ".").first ?? filename
+    /// JSON marker 优先；旧版空 marker 按文件名前缀兼容。
+    private static func marker(for url: URL) -> (category: MessageProvider.Category?, tty: String?) {
+        if let data = try? Data(contentsOf: url),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let type = json["event"] as? String ?? url.lastPathComponent.components(separatedBy: ".").first
+            return (category(forType: type), normalizedTTY(json["tty"] as? String))
+        }
+
+        let type = url.lastPathComponent.components(separatedBy: ".").first ?? url.lastPathComponent
+        return (category(forType: type), nil)
+    }
+
+    private static func category(forType type: String?) -> MessageProvider.Category? {
         switch type {
         case Constants.claudeEventNeedsConfirm: return .needsConfirm
         case Constants.claudeEventDone: return .done
         default: return nil
         }
+    }
+
+    private static func normalizedTTY(_ raw: String?) -> String? {
+        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              value != "??",
+              value != "not a tty" else { return nil }
+        if value.hasPrefix("/dev/") {
+            value.removeFirst("/dev/".count)
+        }
+        return value
     }
 
     private func isTerminalFrontmost() -> Bool {
