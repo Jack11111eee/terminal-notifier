@@ -23,8 +23,8 @@
 > - **需要确认**（Claude 等你批准操作）
 > - **对话完成**（Claude 说完一轮）
 >
-> 开启时 App 自动把 hook 写入 `~/.claude/settings.json`（保留你已有 hook + 自动备份为 `settings.json.tn-backup-<时间戳>`），关闭即移除。与默认提醒一致，仅 Terminal 在后台时才弹。
-> **注意**：按 Esc「中断」无法被检测（Claude Code 不为中断触发 hook）；不处理输入空闲。
+> 开启时 App 自动把 hook 写入 `~/.claude/settings.json`（保留你已有 hook + 自动备份为 `settings.json.tn-backup-<时间戳>`），关闭即移除。Terminal 在后台时直接提醒；Terminal 在前台多窗口时，只有事件来自非最上层 Terminal 窗口才提醒。
+> **注意**：按 Esc「中断」无法被检测（Claude Code 不为中断触发 hook）；不处理输入空闲。前台多窗口归因需要辅助功能权限，并可能请求控制 Terminal 的自动化权限。
 
 > **进阶（可选）：Codex 状态检测**
 > 在 设置 → 通用 里打开「检测 Codex 状态」，App 会通过 Codex lifecycle hooks 区分：
@@ -74,7 +74,7 @@
 |--------|------|
 | **启用提醒** | 总开关。关闭后检测仍然运行，但不会弹出提醒。 |
 | **开机自启动** | 打开后，每次登录 Mac 自动启动 Terminal Notifier。 |
-| **检测 Claude Code 状态** | 写入 `~/.claude/settings.json`，捕捉 Claude 需要确认和完成一轮。 |
+| **检测 Claude Code 状态** | 写入 `~/.claude/settings.json`，捕捉 Claude 需要确认和完成一轮；Terminal 前台多窗口时可定位来源窗口。 |
 | **检测 Codex 状态** | 写入 `~/.codex/hooks.json`，捕捉 Codex 需要确认和完成一轮。 |
 | **语言** | 中文 / 英文 / 跟随系统。控制气泡提示文字的语言。 |
 | **宠物** | 目前只有"像素猫"，更多宠物后续更新。 |
@@ -86,7 +86,7 @@
 | **播放声音** | 提醒时播放系统提示音。如果觉得烦可以关掉。 |
 | **冷却时间** | 两次提醒之间的最短间隔（5–120 秒）。默认 10 秒，防止猫频繁弹窗。 |
 | **免打扰时段** | 开启后在指定时间段内不弹出提醒。例如设为 22:00–08:00，猫晚上就安静了。 |
-| **关闭提醒后跳转来源应用** | 关闭提醒时自动把 Terminal.app 或 Codex.app 切到最前。方便直接查看。 |
+| **关闭提醒后跳转来源应用** | 关闭提醒时自动把 Terminal.app 或 Codex.app 切到最前；Claude 多窗口事件会优先跳到来源 Terminal 窗口。 |
 
 ---
 
@@ -105,13 +105,17 @@
 
 能。猫的悬浮窗口层级高于全屏应用，看电影、全屏编辑器、PPT 演示时都能弹出。
 
-### Q: 为什么连 Terminal 在前台也会弹？
+### Q: Terminal 在前台时什么时候会弹？
 
-产品设计如此。有时候你正在终端里操作其他标签页，没注意到某个标签页需要你的确认。
+默认 badge 检测在 Terminal.app 前台时会抑制，不弹。开启 Claude Code 状态检测后，如果 Terminal.app 前台有多个可见窗口，App 会尝试根据 hook marker 里的 TTY 定位来源窗口；只有来源窗口不是最上层 Terminal 窗口时才弹。若无法可靠定位来源窗口，则继续抑制。
+
+### Q: 为什么开启 Claude Code 状态检测后 macOS 要权限？
+
+基础 badge 检测不需要权限。Claude 前台多窗口归因需要读取和抬起 Terminal 窗口，因此会请求辅助功能权限；使用 Terminal 自动化信息辅助匹配窗口时，macOS 也可能弹出控制 Terminal 的权限提示。
 
 ### Q: 会收集我的数据吗？
 
-不会。Terminal Notifier 完全离线运行。它会检查 Terminal.app 的 Dock badge 值，并在你开启进阶检测时写入本地 Claude / Codex hooks，让对应工具投放本地 marker 文件。所有设置和历史记录都存储在本地。
+不会。Terminal Notifier 完全离线运行。它会检查 Terminal.app 的 Dock badge 值，并在你开启进阶检测时写入本地 Claude / Codex hooks，让对应工具投放本地 marker 文件。开启 Claude Code 状态检测时，marker 中的事件类型和 TTY 只用于本机窗口归因。所有设置和历史记录都存储在本地。
 
 ### Q: 支持 iTerm2 吗？
 

@@ -28,6 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastClaudeCodeEnabledValue: Bool = false
     private var lastCodexAppEnabledValue: Bool = false
     private var currentOverlaySource: NotificationSource = .terminal
+    private var currentOverlayTargetWindow: TerminalWindowInfo?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let previewMode = PreviewMode.current {
@@ -107,6 +108,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         contentMonitor.startMonitoring()
         // 持久化开启时，自愈式确保 hook 已安装并启动监控。
         if preferences.claudeCodeEnabled {
+            TerminalWindowRegistry.requestAccessibilityTrustIfNeeded()
             if !ClaudeHookManager.install() {
                 print("[TerminalNotifier] Claude Code hook install failed")
             }
@@ -130,6 +132,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 切换 Claude Code 状态检测：安装/卸载 hook + 启停监控。
     private func setClaudeCodeEnabled(_ enabled: Bool) {
         if enabled {
+            TerminalWindowRegistry.requestAccessibilityTrustIfNeeded()
             if !ClaudeHookManager.install() {
                 print("[TerminalNotifier] Claude Code hook install failed")
             }
@@ -157,13 +160,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func showOverlay(message: String, source: NotificationSource) {
+    private func showOverlay(
+        message: String,
+        source: NotificationSource,
+        targetWindow: TerminalWindowInfo?
+    ) {
         tnLog("showOverlay: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod)")
         guard preferences.enabled, !preferences.isInDNDPeriod else {
             tnLog("showOverlay BLOCKED: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod)")
             return
         }
-        let screen = TerminalScreenLocator.locateScreen(ownerName: source.windowOwnerName)
+        currentOverlayTargetWindow = targetWindow
+        let screen = targetWindow.map { TerminalWindowRegistry.screen(for: $0) }
+            ?? TerminalScreenLocator.locateScreen(ownerName: source.windowOwnerName)
         tnLog("showOverlay: calling overlayController.show screen=\(screen)")
         overlayController.show(on: screen, message: message)
         soundManager.playNotificationSound()
@@ -265,13 +274,13 @@ extension AppDelegate: TerminalContentMonitorDelegate {
 }
 
 extension AppDelegate: ClaudeCodeMonitorDelegate {
-    func claudeCodeMonitor(_ monitor: ClaudeCodeMonitor, didEmit category: MessageProvider.Category) {
-        tnLog("claudeCodeMonitor didEmit \(category.rawValue)")
+    func claudeCodeMonitor(_ monitor: ClaudeCodeMonitor, didEmit event: AgentNotificationEvent) {
+        tnLog("claudeCodeMonitor didEmit \(event.category.rawValue) tty=\(event.tty ?? "nil") window=\(event.targetWindow?.windowID ?? 0)")
         guard preferences.enabled, !preferences.isInDNDPeriod else {
             tnLog("claudeCodeMonitor BLOCKED by prefs")
             return
         }
-        stateMachine.handleEvent(.agentTrigger(category, .claudeCode))
+        stateMachine.handleEvent(.agentTrigger(event))
     }
 }
 
@@ -282,7 +291,11 @@ extension AppDelegate: CodexAppMonitorDelegate {
             tnLog("codexAppMonitor BLOCKED by prefs")
             return
         }
-        stateMachine.handleEvent(.agentTrigger(category, .codexApp))
+        stateMachine.handleEvent(.agentTrigger(AgentNotificationEvent(
+            category: category,
+            source: .codexApp,
+            tty: nil,
+            targetWindow: nil)))
     }
 }
 
@@ -300,34 +313,42 @@ extension AppDelegate: NotificationStateMachineDelegate {
         _ sm: NotificationStateMachine,
         shouldShowOverlayWithMessage message: String,
         category: MessageProvider.Category,
-        source: NotificationSource
+        source: NotificationSource,
+        targetWindow: TerminalWindowInfo?
     ) {
         tnLog("stateMachine: shouldShowOverlay msg=\(message)")
         currentOverlaySource = source
+        currentOverlayTargetWindow = targetWindow
         historyManager.addRecord(NotificationRecord(
             id: UUID(),
             timestamp: Date(),
             badgeLabel: source.historyBadgeLabel,
             message: message,
             category: category.rawValue))
-        showOverlay(message: message, source: source)
+        showOverlay(message: message, source: source, targetWindow: targetWindow)
     }
     func stateMachine(
         _ sm: NotificationStateMachine,
         shouldUpdateMessage message: String,
         category: MessageProvider.Category,
-        source: NotificationSource
+        source: NotificationSource,
+        targetWindow: TerminalWindowInfo?
     ) {
         tnLog("stateMachine: shouldUpdate msg=\(message)")
         currentOverlaySource = source
+        currentOverlayTargetWindow = targetWindow
         overlayController.updateMessage(message)
     }
     func stateMachineShouldDismissOverlay(_ sm: NotificationStateMachine) {
         tnLog("stateMachine: shouldDismiss")
         if preferences.switchToTerminal {
-            NSWorkspace.shared.runningApplications
-                .first { $0.bundleIdentifier == currentOverlaySource.bundleIdentifier }?
-                .activate(options: .activateIgnoringOtherApps)
+            if currentOverlaySource == .claudeCode {
+                TerminalWindowRegistry.activate(currentOverlayTargetWindow)
+            } else {
+                NSWorkspace.shared.runningApplications
+                    .first { $0.bundleIdentifier == currentOverlaySource.bundleIdentifier }?
+                    .activate(options: .activateIgnoringOtherApps)
+            }
         }
         overlayController.beginDismiss()
     }

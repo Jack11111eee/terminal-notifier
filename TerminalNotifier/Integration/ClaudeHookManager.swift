@@ -18,14 +18,16 @@ enum ClaudeHookManager {
             .appendingPathComponent(".claude/settings.json")
     }
 
-    private static var needsConfirmCommand: String {
+    private static func command(for event: String) -> String {
         let rel = Constants.claudeEventsRelativePath
-        return "mkdir -p \"$HOME/\(rel)\" && mktemp \"$HOME/\(rel)/\(Constants.claudeEventNeedsConfirm).XXXXXX\" >/dev/null 2>&1 \(Constants.claudeHookMarker)"
-    }
-
-    private static var doneCommand: String {
-        let rel = Constants.claudeEventsRelativePath
-        return "mkdir -p \"$HOME/\(rel)\" && mktemp \"$HOME/\(rel)/\(Constants.claudeEventDone).XXXXXX\" >/dev/null 2>&1 \(Constants.claudeHookMarker)"
+        return """
+        rel='\(rel)'; dir="$HOME/$rel"; mkdir -p "$dir"; \
+        tty_name="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ')"; \
+        [ -z "$tty_name" ] && tty_name="$(tty 2>/dev/null | sed 's#^/dev/##')"; \
+        file="$(mktemp "$dir/\(event).XXXXXX")" || exit 0; \
+        printf '{"event":"%s","source":"claude","tty":"%s","timestamp":%s}\\n' '\(event)' "$tty_name" "$(date +%s)" > "$file" \
+        \(Constants.claudeHookMarker)
+        """
     }
 
     // MARK: - 公开接口
@@ -42,11 +44,11 @@ enum ClaudeHookManager {
         hooks["Notification"] = ensureEntry(
             in: notificationGroups,
             matcher: "permission_prompt",
-            command: needsConfirmCommand)
+            command: command(for: Constants.claudeEventNeedsConfirm))
         hooks["Stop"] = ensureEntry(
             in: stopGroups,
             matcher: nil,
-            command: doneCommand)
+            command: command(for: Constants.claudeEventDone))
 
         settings["hooks"] = hooks
         return save(settings)
@@ -78,7 +80,27 @@ enum ClaudeHookManager {
     private static func ensureEntry(
         in groups: [[String: Any]], matcher: String?, command: String
     ) -> [[String: Any]] {
-        if groups.contains(where: groupContainsMarker) { return groups }
+        if groups.contains(where: groupContainsMarker) {
+            return groups.map { group in
+                guard var hooks = group["hooks"] as? [[String: Any]],
+                      hooks.contains(where: { ($0["command"] as? String)?.contains(Constants.claudeHookMarker) == true })
+                else { return group }
+
+                hooks = hooks.map { hook in
+                    guard (hook["command"] as? String)?.contains(Constants.claudeHookMarker) == true else {
+                        return hook
+                    }
+                    var updated = hook
+                    updated["type"] = "command"
+                    updated["command"] = command
+                    return updated
+                }
+
+                var updatedGroup = group
+                updatedGroup["hooks"] = hooks
+                return updatedGroup
+            }
+        }
         var group: [String: Any] = ["hooks": [["type": "command", "command": command]]]
         if let matcher { group["matcher"] = matcher }
         return groups + [group]

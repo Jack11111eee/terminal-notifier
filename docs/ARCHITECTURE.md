@@ -18,8 +18,9 @@ TerminalNotifier/
 │   │   └── StatusBarController.swift          # 菜单栏猫图标（normal/notifying/paused 三态各一张 PNG）+ 下拉菜单
 │   ├── Detection/
 │   │   ├── TerminalContentMonitor.swift       # lsappinfo 轮询 Terminal Dock badge
-│   │   ├── ClaudeCodeMonitor.swift            # 轮询 Claude Code hook 投放的事件标记文件
+│   │   ├── ClaudeCodeMonitor.swift            # 轮询 Claude Code hook 投放的 JSON 事件标记
 │   │   ├── CodexAppMonitor.swift              # 轮询 Codex hook 投放的事件标记文件
+│   │   ├── TerminalWindowRegistry.swift       # Terminal 可见窗口顺序、TTY 归因与窗口抬起
 │   │   └── TerminalScreenLocator.swift        # 定位 Terminal 所在屏幕
 │   ├── Integration/
 │   │   ├── ClaudeHookManager.swift            # 安全合并/移除 ~/.claude/settings.json 的 hook
@@ -74,7 +75,7 @@ TerminalNotifier/
 - 解析输出中的 `"label"="N"`，N > 0 表示有 badge
 - 当 Terminal **不是**最前面应用 + badge 出现 → 触发提醒
 - 首次启动捕获当前 badge 值作为基线，避免误触发已有 badge
-- **无需辅助功能权限**
+- **无需辅助功能权限**；Terminal 前台多窗口精确归因由可选 Claude Code hook 触发源处理，badge 基础检测仍在 Terminal 前台时抑制
 
 ### 2.2 悬浮窗口：NSWindow level 101 + visibleFrame
 
@@ -91,19 +92,24 @@ TerminalNotifier/
 
 ### 2.4 权限需求
 
-- **无特殊权限需求**。Badge 检测通过 `lsappinfo` 命令读取，无需辅助功能权限或屏幕录制权限
-- **App Sandbox**：关闭。`Process` 执行 CLI 命令 + `CGWindowListCopyWindowInfo` 需要非沙盒环境
-- **代码签名**：自签证书 `TerminalNotifierDev`（`codesign --sign "TerminalNotifierDev"`），保持 TCC 权限跨重编译稳定（如未来需要其他权限）
+- **Badge 基础检测无特殊权限**。通过 `lsappinfo` 命令读取 Terminal Dock badge，无需辅助功能权限或屏幕录制权限
+- **Claude hook 前台多窗口归因需要 opt-in 权限**。开启「检测 Claude Code 状态」后，App 会请求辅助功能权限，用于读取/抬起 Terminal 窗口；用 Terminal 自动化读取窗口 TTY 时，macOS 也可能弹出控制 Terminal 的自动化授权
+- **App Sandbox**：关闭。`Process` 执行 CLI 命令、`CGWindowListCopyWindowInfo`、AppleScript 与 AX 窗口操作需要非沙盒环境
+- **Info.plist**：`NSAppleEventsUsageDescription` 说明 Terminal 自动化仅用于把 Claude Code 事件匹配到来源窗口
+- **代码签名**：自签证书 `TerminalNotifierDev`（`codesign --sign "TerminalNotifierDev"`），保持 TCC 权限跨重编译稳定
 
 ### 2.5 Claude Code 集成（第二触发源）
 
 独立于 badge 的语义化信号源：
 
-- **hook → App 通道**：`ClaudeHookManager` 在 `~/.claude/settings.json` 注册两条 command hook——`Notification`（`matcher: permission_prompt`）和 `Stop`。hook 经 `/bin/sh` 用 `mktemp` 在 `~/Library/Application Support/TerminalNotifier/claude-events/` 投放标记文件（`<type>.XXXXXX`；macOS BSD `date` 无 `%N`，故用 mktemp 保唯一）。
-- **消费**：`ClaudeCodeMonitor` 每秒轮询该目录，解析类型→`MessageProvider.Category`→删文件→Terminal 非前台则回调 delegate。
+- **hook → App 通道**：`ClaudeHookManager` 在 `~/.claude/settings.json` 注册两条 command hook——`Notification`（`matcher: permission_prompt`）和 `Stop`。hook 经 `/bin/sh` 用 `mktemp` 在 `~/Library/Application Support/TerminalNotifier/claude-events/` 投放 JSON 标记文件（macOS BSD `date` 无 `%N`，故用 mktemp 保唯一）。
+- **marker 格式**：`{"event":"needs_confirm|done","source":"claude","tty":"ttysXXX","timestamp":...}`。旧版空 marker 仍按文件名前缀兼容。
+- **消费**：`ClaudeCodeMonitor` 每秒轮询该目录，解析 JSON → `MessageProvider.Category` → 删除文件。Terminal 后台时直接回调 delegate；Terminal 前台时只在 marker 能映射到非最上层 Terminal 窗口时回调。
+- **窗口归因**：`TerminalWindowRegistry` 用 `CGWindowListCopyWindowInfo` 获取可见 Terminal 窗口前后顺序，用 Terminal AppleScript、窗口标题和 AX 树把 marker 的 TTY 映射到 `TerminalWindowInfo`。归因失败时在 Terminal 前台继续抑制，避免误弹。
 - **安全合并**：`install()/uninstall()` 用 `JSONSerialization` 只增删带 `# terminal-notifier-hook` 标记的 entry，幂等，写前时间戳备份。**权衡**：重写会规整文件格式/键序。
-- **状态机**：新增 `.agentTrigger(category, source)`，复用现有掉落/气泡/跳回/冷却；hook 提醒不参与「N 条」合并，也不做 2 分钟 longWait 升级。
+- **状态机**：新增 `.agentTrigger(AgentNotificationEvent)`，复用现有掉落/气泡/跳回/冷却；hook 提醒携带 `NotificationSource` 与可选目标窗口，不参与「N 条」合并，也不做 2 分钟 longWait 升级。
 - **开关**：`PreferencesManager.claudeCodeEnabled`（默认关）；`AppDelegate` 观察其变化触发 install/uninstall + 启停监控，启动时若开启则幂等自愈。
+- **跳转**：用户关闭提醒且开启「关闭提醒后跳转来源应用」时，Claude 多窗口事件优先通过 AX 抬起来源 Terminal 窗口；没有来源窗口则激活 Terminal.app。
 - **限制**：Esc 中断无对应 hook 不可检测；不处理 idle；前台门控仅识别 Terminal.app。
 
 ### 2.6 Codex 集成（第三触发源）
@@ -231,7 +237,58 @@ struct TerminalScreenLocator {
 
 **实现：** `CGWindowListCopyWindowInfo` 查找 owner name 为 "Terminal" 的窗口 → 取 bounds → 匹配 `NSScreen.screens`。找不到则回退到主屏幕。
 
-### 3.5 Notification / NotificationStateMachine
+### 3.5 Detection / ClaudeCodeMonitor
+
+轮询 Claude Code hook 投放的 JSON marker。
+
+```swift
+protocol ClaudeCodeMonitorDelegate: AnyObject {
+    func claudeCodeMonitor(_ monitor: ClaudeCodeMonitor, didEmit event: AgentNotificationEvent)
+}
+
+struct AgentNotificationEvent {
+    let category: MessageProvider.Category
+    let source: NotificationSource
+    let tty: String?
+    let targetWindow: TerminalWindowInfo?
+}
+```
+
+**前台门控：**
+1. Terminal.app 不在前台：marker 有效即回调。
+2. Terminal.app 在前台：读取 marker 的 `tty`，交给 `TerminalWindowRegistry.window(forTTY:)`。
+3. 找到来源窗口且来源窗口不是 `TerminalWindowRegistry.topWindow()`：回调，并把 `targetWindow` 交给状态机。
+4. 找不到来源窗口，或来源窗口就是最上层 Terminal 窗口：消费 marker 但不提醒。
+
+### 3.6 Detection / TerminalWindowRegistry
+
+维护 Terminal 可见窗口顺序、TTY 归因和目标窗口抬起。
+
+```swift
+struct TerminalWindowInfo: Equatable {
+    let windowID: CGWindowID
+    let ownerPID: pid_t
+    let title: String
+    let bounds: CGRect
+}
+
+enum TerminalWindowRegistry {
+    static func orderedWindows() -> [TerminalWindowInfo]
+    static func topWindow() -> TerminalWindowInfo?
+    static func isTopTerminalWindow(_ window: TerminalWindowInfo) -> Bool
+    static func window(forTTY tty: String) -> TerminalWindowInfo?
+    static func screen(for window: TerminalWindowInfo?) -> NSScreen
+    static func activate(_ window: TerminalWindowInfo?)
+    static func requestAccessibilityTrustIfNeeded() -> Bool
+}
+```
+
+**实现：**
+- `orderedWindows()` 用 `CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements])` 读取 layer 0 的可见 Terminal 窗口，返回顺序即窗口上下关系，第一项视为最上层 Terminal 窗口。
+- `window(forTTY:)` 先用 Terminal AppleScript 读取可见窗口所有 tabs 的 `tty`、窗口标题和 bounds，再用标题/bounds 与 CGWindow 结果匹配；失败时回退窗口标题包含 TTY、AX 树文本包含 TTY。
+- `activate(_:)` 先激活 Terminal 进程，再对匹配 AX window 执行 `kAXRaiseAction`。没有目标窗口时只激活 Terminal.app。
+
+### 3.7 Notification / NotificationStateMachine
 
 管理通知的完整生命周期。
 
@@ -285,7 +342,7 @@ class NotificationStateMachine {
 
 **长时间未响应：** 进入 `.showing` 时启动 `longWaitTimer`，`badgeFirstDetectedAt` 记录首次检测时间。badge 持续存在满 2 分钟仍未被关闭 → 触发 `.longWaitElapsed`，主动将气泡话语类别切换为 `long_wait`（用户点关闭则定时器取消）。
 
-### 3.6 Overlay / OverlayWindowController
+### 3.8 Overlay / OverlayWindowController
 
 管理透明悬浮窗口。
 
@@ -338,7 +395,7 @@ class OverlayWindow: NSWindow {
 }
 ```
 
-### 3.7 Overlay / PetSpriteView
+### 3.9 Overlay / PetSpriteView
 
 ```swift
 class PetSpriteView: NSView {
@@ -358,7 +415,7 @@ enum PetAnimation {
 }
 ```
 
-### 3.8 Overlay / SpeechBubbleView
+### 3.10 Overlay / SpeechBubbleView
 
 ```swift
 class SpeechBubbleView: NSView {
@@ -373,7 +430,7 @@ class SpeechBubbleView: NSView {
 }
 ```
 
-### 3.9 Animation / DropBounceAnimator
+### 3.11 Animation / DropBounceAnimator
 
 ```swift
 class DropBounceAnimator {
@@ -393,7 +450,7 @@ duration = 1.2s  // 总时长
 
 生成 60+ 关键帧 → `CAKeyframeAnimation(keyPath: "position.y")`。
 
-### 3.10 Animation / JumpBackAnimator
+### 3.12 Animation / JumpBackAnimator
 
 ```swift
 class JumpBackAnimator {
@@ -404,7 +461,7 @@ class JumpBackAnimator {
 
 `CAKeyframeAnimation(keyPath: "position")`，抛物线弧路径，0.6s，配合缩小动画。
 
-### 3.11 Animation / SpriteFramePlayer
+### 3.13 Animation / SpriteFramePlayer
 
 ```swift
 class SpriteFramePlayer {
@@ -417,7 +474,7 @@ class SpriteFramePlayer {
 }
 ```
 
-### 3.12 Messages / MessageProvider
+### 3.14 Messages / MessageProvider
 
 ```swift
 struct MessageProvider {
@@ -474,7 +531,7 @@ struct MessageProvider {
 }
 ```
 
-### 3.13 Settings / PreferencesManager
+### 3.15 Settings / PreferencesManager
 
 ```swift
 class PreferencesManager: ObservableObject {
@@ -499,7 +556,7 @@ class PreferencesManager: ObservableObject {
 }
 ```
 
-### 3.14 Settings / SettingsView (SwiftUI)
+### 3.16 Settings / SettingsView (SwiftUI)
 
 ```swift
 struct SettingsView: View {
@@ -520,7 +577,7 @@ struct SettingsView: View {
 **通用 Tab：** 启用/禁用、开机自启、语言选择、宠物选择（预留）
 **通知 Tab：** 声音开关、冷却时间下拉（5/10/15/30/60/120 秒）、免打扰时段、消失后跳转终端
 
-### 3.15 Settings / SettingsWindowController
+### 3.17 Settings / SettingsWindowController
 
 ```swift
 class SettingsWindowController {
@@ -542,7 +599,7 @@ class SettingsWindowController {
 }
 ```
 
-### 3.16 History / NotificationHistoryManager
+### 3.18 History / NotificationHistoryManager
 
 ```swift
 struct NotificationRecord: Codable, Identifiable {
@@ -565,7 +622,7 @@ class NotificationHistoryManager {
 
 存储：UserDefaults + JSON 编码，最多 100 条。
 
-### 3.17 Sound / SoundManager
+### 3.19 Sound / SoundManager
 
 ```swift
 class SoundManager {

@@ -10,7 +10,7 @@ enum NotificationState: Equatable {
 enum NotificationEvent {
     case badgeDetected
     case badgeCleared
-    case agentTrigger(MessageProvider.Category, NotificationSource)
+    case agentTrigger(AgentNotificationEvent)
     case dropAnimationCompleted
     case userDismissed
     case jumpBackCompleted
@@ -24,12 +24,14 @@ protocol NotificationStateMachineDelegate: AnyObject {
         _ sm: NotificationStateMachine,
         shouldShowOverlayWithMessage message: String,
         category: MessageProvider.Category,
-        source: NotificationSource)
+        source: NotificationSource,
+        targetWindow: TerminalWindowInfo?)
     func stateMachine(
         _ sm: NotificationStateMachine,
         shouldUpdateMessage message: String,
         category: MessageProvider.Category,
-        source: NotificationSource)
+        source: NotificationSource,
+        targetWindow: TerminalWindowInfo?)
     func stateMachineShouldDismissOverlay(_ sm: NotificationStateMachine)
 }
 
@@ -45,8 +47,9 @@ class NotificationStateMachine {
     /// 非 nil 表示当前提醒来自语义化 hook（携带具体分类）；nil 表示 badge 默认行为。
     private var activeCategory: MessageProvider.Category?
     private var activeSource: NotificationSource = .terminal
+    private var activeTargetWindow: TerminalWindowInfo?
     /// 冷却期间到达的 hook 事件，冷却结束后补弹。
-    private var pendingAgent: (category: MessageProvider.Category, source: NotificationSource)?
+    private var pendingAgent: AgentNotificationEvent?
     private let messageProvider = MessageProvider()
     private var locale: String { PreferencesManager.shared.resolvedLocale }
 
@@ -69,15 +72,18 @@ class NotificationStateMachine {
                 self,
                 shouldShowOverlayWithMessage: msg,
                 category: .newNotification,
-                source: .terminal)
+                source: .terminal,
+                targetWindow: nil)
 
-        case (.idle, .agentTrigger(let cat, let source)):
+        case (.idle, .agentTrigger(let event)):
             guard !isInCooldown else {
-                pendingAgent = (cat, source)
+                pendingAgent = event
                 return
             }
+            let cat = event.category
             activeCategory = cat
-            activeSource = source
+            activeSource = event.source
+            activeTargetWindow = event.targetWindow
             pendingCount = 1
             let msg = messageProvider.randomMessage(category: cat, locale: locale)
             currentState = .detected(count: 1)
@@ -87,34 +93,46 @@ class NotificationStateMachine {
                 self,
                 shouldShowOverlayWithMessage: msg,
                 category: cat,
-                source: source)
+                source: event.source,
+                targetWindow: event.targetWindow)
 
-        case (.showing, .agentTrigger(let cat, let source)):
+        case (.showing, .agentTrigger(let event)):
+            let cat = event.category
             activeCategory = cat
-            activeSource = source
+            activeSource = event.source
+            activeTargetWindow = event.targetWindow
             let msg = messageProvider.randomMessage(category: cat, locale: locale)
-            delegate?.stateMachine(self, shouldUpdateMessage: msg, category: cat, source: source)
+            delegate?.stateMachine(
+                self,
+                shouldUpdateMessage: msg,
+                category: cat,
+                source: event.source,
+                targetWindow: event.targetWindow)
 
         case (.idle, .cooldownExpired):
             if let pending = pendingAgent {
                 pendingAgent = nil
-                activeCategory = pending.category
+                let cat = pending.category
+                activeCategory = cat
                 activeSource = pending.source
+                activeTargetWindow = pending.targetWindow
                 pendingCount = 1
-                let msg = messageProvider.randomMessage(category: pending.category, locale: locale)
+                let msg = messageProvider.randomMessage(category: cat, locale: locale)
                 currentState = .detected(count: 1)
                 badgeFirstDetectedAt = Date()
                 delegate?.stateMachine(self, didTransitionTo: currentState)
                 delegate?.stateMachine(
                     self,
                     shouldShowOverlayWithMessage: msg,
-                    category: pending.category,
-                    source: pending.source)
+                    category: cat,
+                    source: pending.source,
+                    targetWindow: pending.targetWindow)
             } else if pendingCount > 0 {
                 let count = pendingCount
                 pendingCount = 0
                 activeCategory = nil
                 activeSource = .terminal
+                activeTargetWindow = nil
                 let message = messageForShowing(count: count, badgeAge: 0)
                 currentState = .detected(count: count)
                 badgeFirstDetectedAt = Date()
@@ -123,7 +141,8 @@ class NotificationStateMachine {
                     self,
                     shouldShowOverlayWithMessage: message.text,
                     category: message.category,
-                    source: .terminal)
+                    source: .terminal,
+                    targetWindow: nil)
             }
 
         case (.detected, .badgeDetected):
@@ -142,7 +161,8 @@ class NotificationStateMachine {
                     self,
                     shouldUpdateMessage: message.text,
                     category: message.category,
-                    source: activeSource)
+                    source: activeSource,
+                    targetWindow: activeTargetWindow)
             }
 
         case (.showing, .badgeDetected):
@@ -151,13 +171,15 @@ class NotificationStateMachine {
             else { newCount = 1 }
             activeCategory = nil
             activeSource = .terminal
+            activeTargetWindow = nil
             currentState = .showing(count: newCount)
             let message = messageForShowing(count: newCount, badgeAge: badgeAge)
             delegate?.stateMachine(
                 self,
                 shouldUpdateMessage: message.text,
                 category: message.category,
-                source: .terminal)
+                source: .terminal,
+                targetWindow: nil)
 
         case (.showing, .userDismissed):
             longWaitTimer?.invalidate()
@@ -171,6 +193,7 @@ class NotificationStateMachine {
             badgeFirstDetectedAt = nil
             activeCategory = nil
             activeSource = .terminal
+            activeTargetWindow = nil
             startCooldown()
             delegate?.stateMachine(self, didTransitionTo: currentState)
 
@@ -239,6 +262,7 @@ class NotificationStateMachine {
         badgeFirstDetectedAt = nil
         activeCategory = nil
         activeSource = .terminal
+        activeTargetWindow = nil
         pendingAgent = nil
         currentState = .idle
     }
