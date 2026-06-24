@@ -32,7 +32,7 @@
 > - **对话完成**（Codex 完成一轮）
 >
 > 开启时 App 自动把 hooks 写入 `~/.codex/hooks.json`（保留你已有 hooks + 自动备份为 `hooks.json.tn-backup-<时间戳>`），关闭即移除。仅 Codex 不在前台时才弹。可单独关闭 `PermissionRequest` 审批请求提醒，只保留 `Stop` 完成提醒。
-> **必须信任 hooks**：开启或修改 Codex hooks 后请重启或重新打开 Codex，然后进入 Codex 设置 → 钩子，审核并信任已启用的 Terminal Notifier hooks。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
+> **必须信任 hooks**：开启或修改 Codex hooks 后请退出并重新打开 Codex，让 hooks 重新加载。然后进入 Codex 设置 → 钩子，信任 `Terminal Notifier: Codex approval reminder`（`PermissionRequest`，如已开启）和 `Terminal Notifier: Codex completion reminder`（`Stop`）。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
 > **auto-review**：Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook；如果只想收到完成提醒，可关闭审批请求提醒。
 > **注意**：Codex hooks 是用户级配置，可能同时被本机 Codex App / CLI / IDE Extension 采用；当前不区分具体 Codex 入口。若需要排查 hook 是否执行，可查看 `~/Library/Application Support/TerminalNotifier/codex-hook.log`。
 

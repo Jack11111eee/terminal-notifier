@@ -122,7 +122,7 @@ TerminalNotifier/
 - **安全合并**：`install(includePermissionRequest:)`/`uninstall()` 用 `JSONSerialization` 只增删 Terminal Notifier 管理的 entry，幂等，写前时间戳备份。新 hook 使用事件级 marker 和 `statusMessage` 便于在 Codex 中识别，并兼容移除旧版 `# terminal-notifier-codex-hook` entry。若现有 `hooks.json` 不是可合并 JSON object，则取消写入并保留原文件。
 - **来源处理**：状态机记录 `NotificationSource`，初次显示和消息更新都把来源传给 `AppDelegate`；关闭提醒后的跳转会激活来源应用（Terminal 或 Codex）。
 - **开关**：`PreferencesManager.codexAppEnabled`（默认关）控制 Codex hooks 总开关；`codexPermissionRequestEnabled`（默认开）控制是否安装和响应 `PermissionRequest` 审批请求提醒。
-- **信任要求**：Codex 会跳过未信任的 non-managed hooks。用户开启或修改 Codex hooks 后需要重启或重新打开 Codex，并在 Codex 设置 → 钩子里审核并信任已启用的 Terminal Notifier hooks。
+- **信任要求**：Codex 会跳过未信任的 non-managed hooks。用户开启或修改 Codex hooks 后需要退出并重新打开 Codex，让 hooks 重新加载；随后在 Codex 设置 → 钩子里信任 `Terminal Notifier: Codex approval reminder`（`PermissionRequest`，如已开启）和 `Terminal Notifier: Codex completion reminder`（`Stop`）。
 - **auto-review**：Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook，因此确认提醒可能早于或独立于自动审核结果出现；用户可关闭审批请求提醒，只保留 `Stop` 完成提醒。
 - **限制**：Codex hooks 是用户级配置，可能同时被本机 Codex App / CLI / IDE Extension 采用；当前不区分具体 Codex 入口，也不读取 Codex App 内部实时运行状态。受管理 hook 会追加 `~/Library/Application Support/TerminalNotifier/codex-hook.log`，用于区分 hook 未执行和 App 端未提醒。
 

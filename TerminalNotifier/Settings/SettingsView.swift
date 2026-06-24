@@ -128,12 +128,6 @@ private struct SettingsSidebar: View {
             .padding(.horizontal, 12)
 
             Spacer()
-
-            Text(settingsLang("Compatible with macOS 13 and later", zh: "兼容 macOS 13 及更新版本", locale: locale))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 18)
         }
         .frame(width: 218)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
@@ -252,10 +246,10 @@ private struct GeneralSettingsPane: View {
                 SettingsDivider()
 
                 SettingsWarningNote(
-                    title: settingsLang("Trust required in Codex", zh: "必须在 Codex 中信任 hooks", locale: locale),
+                    title: settingsLang("Trust Terminal Notifier hooks", zh: "信任 Terminal Notifier hooks", locale: locale),
                     message: settingsLang(
-                        "After changing Codex hooks, restart or reopen Codex, then review and trust the enabled Terminal Notifier hooks in Codex Settings > Hooks.",
-                        zh: "修改 Codex hooks 后请重启或重新打开 Codex，然后在 Codex 设置 > 钩子中审核并信任已启用的 Terminal Notifier hooks。",
+                        "Quit and reopen Codex so hooks reload, then trust “Terminal Notifier: Codex approval reminder” (PermissionRequest, if enabled) and “Terminal Notifier: Codex completion reminder” (Stop) in Codex Settings > Hooks.",
+                        zh: "退出并重新打开 Codex 以重新加载 hooks，然后在 Codex 设置 > 钩子中信任 “Terminal Notifier: Codex approval reminder”（PermissionRequest，如已开启）和 “Terminal Notifier: Codex completion reminder”（Stop）。",
                         locale: locale)
                 )
 

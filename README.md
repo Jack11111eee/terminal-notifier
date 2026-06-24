@@ -77,7 +77,7 @@ INSTALL=1 ./build.sh
 
 开启时 App 会把受管理的 hooks **安全合并**进 `~/.codex/hooks.json`（保留你已有的全部 hooks，并在写入前生成 `hooks.json.tn-backup-<时间戳>` 备份），关闭即移除。与 badge 一致，**仅 Codex 不在前台时才弹**。你可以单独关闭 `PermissionRequest` 的审批请求提醒，只保留 `Stop` 的完成提醒。
 
-**必须信任 hooks：** 开启或修改 Codex hooks 后请重启或重新打开 Codex，然后进入 Codex **设置 → 钩子**，审核并信任已启用的 Terminal Notifier hooks。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
+**必须信任 hooks：** 开启或修改 Codex hooks 后请退出并重新打开 Codex，让 hooks 重新加载。然后进入 Codex **设置 → 钩子**，信任 `Terminal Notifier: Codex approval reminder`（`PermissionRequest`，如已开启）和 `Terminal Notifier: Codex completion reminder`（`Stop`）。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
 
 **auto-review：** Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook，因此即使 Codex 自动完成审核，也可能出现「需要确认」提醒。如果只想收到完成提醒，可在设置中关闭审批请求提醒。
 
