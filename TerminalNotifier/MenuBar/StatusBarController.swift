@@ -192,10 +192,6 @@ class StatusBarController {
     }
 
     private func sectionHeader(_ title: String) -> NSMenuItem {
-        if #available(macOS 14.0, *) {
-            return NSMenuItem.sectionHeader(title: title)
-        }
-
         let item = NSMenuItem(title: title.uppercased(), action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
