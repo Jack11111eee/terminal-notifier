@@ -39,6 +39,10 @@ class CodexAppMonitor {
             let category = Self.category(forMarker: url.lastPathComponent)
             try? FileManager.default.removeItem(at: url)
             guard !frontmost, let category else { continue }
+            if category == .codexNeedsConfirm,
+               !PreferencesManager.shared.codexPermissionRequestEnabled {
+                continue
+            }
             delegate?.codexAppMonitor(self, didEmit: category)
         }
     }

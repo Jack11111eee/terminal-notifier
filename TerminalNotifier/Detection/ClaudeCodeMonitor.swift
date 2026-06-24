@@ -6,8 +6,8 @@ import AppKit
 /// 用 mktemp 在 `Constants.claudeEventsDir` 投放一个 JSON 标记文件。本监控每秒
 /// 轮询该目录，消费（删除）标记文件并回调 delegate。
 ///
-/// Terminal 在后台时沿用提醒；Terminal 在前台时，仅当标记能映射到非最上层
-/// Terminal 窗口时才提醒。
+/// Terminal 在后台时沿用提醒；开启前台多窗口归因后，Terminal 在前台时仅当
+/// 标记能映射到非最上层 Terminal 窗口时才提醒。
 protocol ClaudeCodeMonitorDelegate: AnyObject {
     func claudeCodeMonitor(_ monitor: ClaudeCodeMonitor, didEmit event: AgentNotificationEvent)
 }
@@ -51,10 +51,22 @@ class ClaudeCodeMonitor {
 
     private func poll() {
         let frontmost = isTerminalFrontmost()
+        let windowAttributionEnabled = PreferencesManager.shared.claudeWindowAttributionEnabled
         for url in markerFiles() {
             let marker = Self.marker(for: url)
             try? FileManager.default.removeItem(at: url)
             guard let category = marker.category else { continue }
+
+            guard windowAttributionEnabled else {
+                if !frontmost {
+                    delegate?.claudeCodeMonitor(self, didEmit: AgentNotificationEvent(
+                        category: category,
+                        source: .claudeCode,
+                        tty: marker.tty,
+                        targetWindow: nil))
+                }
+                continue
+            }
 
             let target = marker.tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
             if frontmost {

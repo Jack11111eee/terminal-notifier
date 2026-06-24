@@ -34,8 +34,11 @@ enum Constants {
     /// Codex hook 执行诊断日志（相对 $HOME）。
     static let codexHookLogRelativePath = "Library/Application Support/TerminalNotifier/codex-hook.log"
 
-    /// 写入 ~/.codex/hooks.json 的 hook 命令尾部标记，用于幂等识别与卸载。
+    /// 旧版 Codex hook 命令尾部标记，用于迁移时识别与卸载。
     static let codexHookMarker = "# terminal-notifier-codex-hook"
+    /// 新版 Codex hook 命令尾部标记，按事件拆分便于识别与单独控制。
+    static let codexPermissionHookMarker = "# terminal-notifier-codex-permission-hook"
+    static let codexStopHookMarker = "# terminal-notifier-codex-stop-hook"
 
     static var codexEventsDir: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(codexEventsRelativePath)

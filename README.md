@@ -47,7 +47,7 @@ INSTALL=1 ./build.sh
 
 - **Badge 基础检测零权限**：默认只读 Terminal Dock badge，无需辅助功能权限或屏幕录制权限
 - **Claude Code / Codex 状态检测**（可选）：通过 hook 直接区分「需要确认」和「对话完成」，不依赖终端响铃
-- **Claude 前台多窗口归因**：Terminal.app 在前台时，Claude hook 事件来自非最上层 Terminal 窗口也会提醒
+- **Claude 前台多窗口归因**（可选增强）：Terminal.app 在前台时，Claude hook 事件来自非最上层 Terminal 窗口也会提醒
 - **全屏兼容**：即使你在全屏看视频或写代码，猫也能弹出来
 - **免打扰**：设置时段（如 22:00–08:00），猫会自觉安静
 - **冷却时间**：可调（5–120 秒），防止猫刷屏
@@ -62,9 +62,11 @@ INSTALL=1 ./build.sh
 - **需要确认**：Claude 等你批准某个操作（`Notification` / `permission_prompt`）
 - **对话完成**：Claude 说完一轮（`Stop`）
 
-开启时 App 会把 hook **安全合并**进 `~/.claude/settings.json`（保留你已有的全部 hook，并在写入前生成 `settings.json.tn-backup-<时间戳>` 备份），关闭即移除。Terminal 在后台时直接提醒；Terminal 在前台且有多个可见窗口时，App 会用 hook marker 里的 TTY 归因到来源窗口，只有来源不是最上层 Terminal 窗口时才提醒。归因失败或来源就是最上层窗口时继续抑制。
+开启时 App 会把 hook **安全合并**进 `~/.claude/settings.json`（保留你已有的全部 hook，并在写入前生成 `settings.json.tn-backup-<时间戳>` 备份），关闭即移除。Terminal 在后台时直接提醒；Terminal 在前台时默认继续抑制，避免打扰你正在查看的窗口。
 
-**权限与限制：** Badge 基础检测仍无需权限。Claude 前台多窗口归因会请求辅助功能权限，并可能请求控制 Terminal 的自动化权限；关闭提醒后跳转来源窗口也依赖该能力。按 Esc「中断」时 Claude Code 不触发任何 hook，因此无法检测中断；本功能不处理输入空闲（idle）。自动合并会规整 settings.json 的格式与键序（已备份）。
+**前台多窗口归因：** 如需在 Terminal.app 前台时识别非最上层 Terminal 窗口里的 Claude 事件，可额外开启「前台多窗口归因」。该增强功能会请求辅助功能权限，并可能请求控制 Terminal 的自动化权限；关闭提醒后跳转来源窗口也依赖该能力。未开启或未授权时会降级为零辅助功能权限行为：Terminal 后台提醒、Terminal 前台抑制。
+
+**限制：** 按 Esc「中断」时 Claude Code 不触发任何 hook，因此无法检测中断；本功能不处理输入空闲（idle）。自动合并会规整 settings.json 的格式与键序（已备份）。
 
 ## Codex 状态检测（可选）
 
@@ -73,11 +75,11 @@ INSTALL=1 ./build.sh
 - **需要确认**：Codex 等你批准某个操作（`PermissionRequest`）
 - **对话完成**：Codex 完成一轮（`Stop`）
 
-开启时 App 会把受管理的 hooks **安全合并**进 `~/.codex/hooks.json`（保留你已有的全部 hooks，并在写入前生成 `hooks.json.tn-backup-<时间戳>` 备份），关闭即移除。与 badge 一致，**仅 Codex 不在前台时才弹**。
+开启时 App 会把受管理的 hooks **安全合并**进 `~/.codex/hooks.json`（保留你已有的全部 hooks，并在写入前生成 `hooks.json.tn-backup-<时间戳>` 备份），关闭即移除。与 badge 一致，**仅 Codex 不在前台时才弹**。你可以单独关闭 `PermissionRequest` 的审批请求提醒，只保留 `Stop` 的完成提醒。
 
-**必须信任 hooks：** 开启后请重启或重新打开 Codex，然后进入 Codex **设置 → 钩子**，审核并信任 `PermissionRequest` 和 `Stop` 两项。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
+**必须信任 hooks：** 开启或修改 Codex hooks 后请重启或重新打开 Codex，然后进入 Codex **设置 → 钩子**，审核并信任已启用的 Terminal Notifier hooks。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
 
-**已知问题：** Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook，因此即使 Codex 自动完成审核，也可能出现「需要确认」提醒。
+**auto-review：** Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook，因此即使 Codex 自动完成审核，也可能出现「需要确认」提醒。如果只想收到完成提醒，可在设置中关闭审批请求提醒。
 
 **限制：** Codex hooks 是用户级配置，可能同时被本机 Codex App / CLI / IDE Extension 采用；当前不区分具体 Codex 入口，也不读取 Codex App 内部实时运行状态。若需要排查 hook 是否执行，可查看 `~/Library/Application Support/TerminalNotifier/codex-hook.log`。
 
@@ -89,7 +91,9 @@ INSTALL=1 ./build.sh
 |--------|------|--------|
 | 启用提醒 | 开关全部提醒 | 开 |
 | 检测 Claude Code 状态 | 通过 hook 区分「需要确认 / 对话完成」 | 关 |
+| Claude 前台多窗口归因 | 识别非最上层 Terminal 窗口里的 Claude 事件；需要辅助功能权限 | 关 |
 | 检测 Codex 状态 | 通过 Codex hook 区分「需要确认 / 对话完成」 | 关 |
+| Codex 审批请求提醒 | 控制是否响应 `PermissionRequest`；完成提醒不受影响 | 开 |
 | 开机自启 | 登录时自动启动 | 关 |
 | 语言 | 中文 / 英文 / 跟随系统 | 跟随系统 |
 | 声音 | 提醒时播放音效 | 开 |
@@ -101,7 +105,9 @@ INSTALL=1 ./build.sh
 
 ### Unreleased
 - Claude Code 状态检测增加 Terminal 前台多窗口归因：事件来自非最上层 Terminal 窗口时也会提醒，关闭后可跳到来源窗口。
+- Claude 前台多窗口归因改为独立高级开关，Claude 后台 hook 提醒不再自动请求辅助功能权限。
 - Claude hook marker 改为 JSON，包含事件类型、来源、TTY 和时间戳；旧版空 marker 仍兼容。
+- Codex 状态检测支持单独关闭 `PermissionRequest` 审批请求提醒，同时保留 `Stop` 完成提醒。
 
 ### v1.2.1
 - **修复语言切换无效**：设置界面此前只读系统语言、无视用户选择，与通知话语逻辑割裂；现统一判定，选完即时切换，设置界面与话语语言保持一致。
