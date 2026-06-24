@@ -31,7 +31,7 @@ class OverlayWindowController {
         if window != nil { forceClose() }
         isDismissing = false
 
-        let windowRect = screen.frame
+        let windowRect = screen.visibleFrame
         let menuBarY = screen.frame.maxY
 
         let window = OverlayWindow(
@@ -123,7 +123,7 @@ class OverlayWindowController {
         isDismissing = true
 
         let menuBarY = screen.frame.maxY
-        let windowRect = screen.frame
+        let windowRect = screen.visibleFrame
         let targetY = windowRect.height
             + (menuBarY - windowRect.maxY)
             + Constants.defaultPetSize / 2

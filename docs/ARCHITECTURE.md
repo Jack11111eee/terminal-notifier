@@ -364,7 +364,7 @@ class OverlayWindowController {
 **窗口配置：**
 ```swift
 let window = NSWindow(
-    contentRect: screen.frame,
+    contentRect: screen.visibleFrame,
     styleMask: .borderless,
     backing: .buffered,
     defer: false
