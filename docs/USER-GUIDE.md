@@ -23,17 +23,17 @@
 > - **需要确认**（Claude 等你批准操作）
 > - **对话完成**（Claude 说完一轮）
 >
-> 开启时 App 自动把 hook 写入 `~/.claude/settings.json`（保留你已有 hook + 自动备份为 `settings.json.tn-backup-<时间戳>`），关闭即移除。Terminal 在后台时直接提醒；Terminal 在前台多窗口时，只有事件来自非最上层 Terminal 窗口才提醒。
-> **注意**：按 Esc「中断」无法被检测（Claude Code 不为中断触发 hook）；不处理输入空闲。前台多窗口归因需要辅助功能权限，并可能请求控制 Terminal 的自动化权限。
+> 开启时 App 自动把 hook 写入 `~/.claude/settings.json`（保留你已有 hook + 自动备份为 `settings.json.tn-backup-<时间戳>`），关闭即移除。Terminal 在后台时直接提醒；Terminal 在前台时默认继续抑制。
+> **注意**：如需在 Terminal 前台识别非最上层窗口里的 Claude 事件，可额外开启「前台多窗口归因」。该增强功能需要辅助功能权限，并可能请求控制 Terminal 的自动化权限。按 Esc「中断」无法被检测（Claude Code 不为中断触发 hook）；不处理输入空闲。
 
 > **进阶（可选）：Codex 状态检测**
 > 在 设置 → 通用 里打开「检测 Codex 状态」，App 会通过 Codex lifecycle hooks 区分：
 > - **需要确认**（Codex 等你批准操作）
 > - **对话完成**（Codex 完成一轮）
 >
-> 开启时 App 自动把 hooks 写入 `~/.codex/hooks.json`（保留你已有 hooks + 自动备份为 `hooks.json.tn-backup-<时间戳>`），关闭即移除。仅 Codex 不在前台时才弹。
-> **必须信任 hooks**：开启后请重启或重新打开 Codex，然后进入 Codex 设置 → 钩子，审核并信任 `PermissionRequest` 和 `Stop` 两项。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
-> **已知问题**：Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook，因此即使 Codex 自动完成审核，也可能出现「需要确认」提醒。
+> 开启时 App 自动把 hooks 写入 `~/.codex/hooks.json`（保留你已有 hooks + 自动备份为 `hooks.json.tn-backup-<时间戳>`），关闭即移除。仅 Codex 不在前台时才弹。可单独关闭 `PermissionRequest` 审批请求提醒，只保留 `Stop` 完成提醒。
+> **必须信任 hooks**：开启或修改 Codex hooks 后请退出并重新打开 Codex，让 hooks 重新加载。然后进入 Codex 设置 → 钩子，信任 `Terminal Notifier: Codex approval reminder`（`PermissionRequest`，如已开启）和 `Terminal Notifier: Codex completion reminder`（`Stop`）。未信任前 Codex 会跳过这些 hooks，Terminal Notifier 不会收到提醒。
+> **auto-review**：Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook；如果只想收到完成提醒，可关闭审批请求提醒。
 > **注意**：Codex hooks 是用户级配置，可能同时被本机 Codex App / CLI / IDE Extension 采用；当前不区分具体 Codex 入口。若需要排查 hook 是否执行，可查看 `~/Library/Application Support/TerminalNotifier/codex-hook.log`。
 
 ### 3. 关闭提醒
@@ -74,8 +74,10 @@
 |--------|------|
 | **启用提醒** | 总开关。关闭后检测仍然运行，但不会弹出提醒。 |
 | **开机自启动** | 打开后，每次登录 Mac 自动启动 Terminal Notifier。 |
-| **检测 Claude Code 状态** | 写入 `~/.claude/settings.json`，捕捉 Claude 需要确认和完成一轮；Terminal 前台多窗口时可定位来源窗口。 |
+| **检测 Claude Code 状态** | 写入 `~/.claude/settings.json`，捕捉 Claude 需要确认和完成一轮；不自动请求辅助功能权限。 |
+| **前台多窗口归因** | Claude 增强选项：Terminal 前台时定位非最上层来源窗口；需要辅助功能权限，可能请求 Terminal 自动化权限。 |
 | **检测 Codex 状态** | 写入 `~/.codex/hooks.json`，捕捉 Codex 需要确认和完成一轮。 |
+| **审批请求提醒** | 控制 Codex `PermissionRequest` 是否提醒；关闭后仍保留 `Stop` 完成提醒。 |
 | **语言** | 中文 / 英文 / 跟随系统。控制气泡提示文字的语言。 |
 | **宠物** | 目前只有"像素猫"，更多宠物后续更新。 |
 
@@ -107,15 +109,15 @@
 
 ### Q: Terminal 在前台时什么时候会弹？
 
-默认 badge 检测在 Terminal.app 前台时会抑制，不弹。开启 Claude Code 状态检测后，如果 Terminal.app 前台有多个可见窗口，App 会尝试根据 hook marker 里的 TTY 定位来源窗口；只有来源窗口不是最上层 Terminal 窗口时才弹。若无法可靠定位来源窗口，则继续抑制。
+默认 badge 检测在 Terminal.app 前台时会抑制，不弹。开启 Claude Code 状态检测后，Terminal 在后台时可直接按 Claude hook 提醒；Terminal 在前台时仍默认抑制。只有额外开启「前台多窗口归因」后，App 才会尝试根据 hook marker 里的 TTY 定位来源窗口；只有来源窗口不是最上层 Terminal 窗口时才弹。若无法可靠定位来源窗口，则继续抑制。
 
-### Q: 为什么开启 Claude Code 状态检测后 macOS 要权限？
+### Q: 为什么开启 Claude 前台多窗口归因后 macOS 要权限？
 
-基础 badge 检测不需要权限。Claude 前台多窗口归因需要读取和抬起 Terminal 窗口，因此会请求辅助功能权限；使用 Terminal 自动化信息辅助匹配窗口时，macOS 也可能弹出控制 Terminal 的权限提示。
+基础 badge 检测和 Claude 后台 hook 提醒不需要辅助功能权限。Claude 前台多窗口归因需要读取和抬起 Terminal 窗口，因此会请求辅助功能权限；使用 Terminal 自动化信息辅助匹配窗口时，macOS 也可能弹出控制 Terminal 的权限提示。
 
 ### Q: 会收集我的数据吗？
 
-不会。Terminal Notifier 完全离线运行。它会检查 Terminal.app 的 Dock badge 值，并在你开启进阶检测时写入本地 Claude / Codex hooks，让对应工具投放本地 marker 文件。开启 Claude Code 状态检测时，marker 中的事件类型和 TTY 只用于本机窗口归因。所有设置和历史记录都存储在本地。
+不会。Terminal Notifier 完全离线运行。它会检查 Terminal.app 的 Dock badge 值，并在你开启进阶检测时写入本地 Claude / Codex hooks，让对应工具投放本地 marker 文件。开启 Claude 前台多窗口归因时，marker 中的事件类型和 TTY 只用于本机窗口归因。所有设置和历史记录都存储在本地。
 
 ### Q: 支持 iTerm2 吗？
 

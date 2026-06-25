@@ -128,12 +128,6 @@ private struct SettingsSidebar: View {
             .padding(.horizontal, 12)
 
             Spacer()
-
-            Text(settingsLang("Compatible with macOS 13 and later", zh: "兼容 macOS 13 及更新版本", locale: locale))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 18)
         }
         .frame(width: 218)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
@@ -216,9 +210,18 @@ private struct GeneralSettingsPane: View {
             ) {
                 SettingsToggleRow(
                     title: settingsLang("Detect Claude Code state", zh: "检测 Claude Code 状态", locale: locale),
-                    subtitle: settingsLang("Writes a managed hook into ~/.claude/settings.json. A backup is kept and disabling removes the hook.", zh: "会向 ~/.claude/settings.json 写入受管理的 hook。已备份，关闭后会移除。", locale: locale),
+                    subtitle: settingsLang("Writes managed hooks into ~/.claude/settings.json. Background reminders do not require Accessibility permission.", zh: "会向 ~/.claude/settings.json 写入受管理的 hooks。后台提醒不需要辅助功能权限。", locale: locale),
                     isOn: $preferences.claudeCodeEnabled
                 )
+
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: settingsLang("Foreground multi-window attribution", zh: "前台多窗口归因", locale: locale),
+                    subtitle: settingsLang("Optional: identify and raise the source Terminal window. Requires Accessibility permission and may request Terminal automation.", zh: "可选：识别并抬起来源 Terminal 窗口。需要辅助功能权限，也可能请求 Terminal 自动化权限。", locale: locale),
+                    isOn: $preferences.claudeWindowAttributionEnabled
+                )
+                .disabled(!preferences.claudeCodeEnabled)
             }
 
             SettingsCard(
@@ -234,11 +237,19 @@ private struct GeneralSettingsPane: View {
 
                 SettingsDivider()
 
+                SettingsToggleRow(
+                    title: settingsLang("Approval request reminders", zh: "审批请求提醒", locale: locale),
+                    subtitle: settingsLang("Turn off to avoid PermissionRequest reminders during auto-review. Completion reminders stay enabled.", zh: "关闭后可避免 auto-review 期间的 PermissionRequest 提醒；完成提醒仍会保留。", locale: locale),
+                    isOn: $preferences.codexPermissionRequestEnabled
+                )
+
+                SettingsDivider()
+
                 SettingsWarningNote(
-                    title: settingsLang("Trust required in Codex", zh: "必须在 Codex 中信任 hooks", locale: locale),
+                    title: settingsLang("Trust Terminal Notifier hooks", zh: "信任 Terminal Notifier hooks", locale: locale),
                     message: settingsLang(
-                        "After enabling this, restart or reopen Codex, then review and trust both PermissionRequest and Stop in Codex Settings > Hooks. Reminders will not fire until those hooks are trusted.",
-                        zh: "开启后请重启或重新打开 Codex，然后在 Codex 设置 > 钩子中审核并信任 PermissionRequest 和 Stop。未信任前不会触发提醒。",
+                        "Quit and reopen Codex so hooks reload, then trust “Terminal Notifier: Codex approval reminder” (PermissionRequest, if enabled) and “Terminal Notifier: Codex completion reminder” (Stop) in Codex Settings > Hooks.",
+                        zh: "退出并重新打开 Codex 以重新加载 hooks，然后在 Codex 设置 > 钩子中信任 “Terminal Notifier: Codex approval reminder”（PermissionRequest，如已开启）和 “Terminal Notifier: Codex completion reminder”（Stop）。",
                         locale: locale)
                 )
 
@@ -247,8 +258,8 @@ private struct GeneralSettingsPane: View {
                 SettingsWarningNote(
                     title: settingsLang("Known issue: auto-review", zh: "已知问题：auto-review", locale: locale),
                     message: settingsLang(
-                        "Codex auto-review can still emit PermissionRequest hooks, so a confirmation reminder may appear even when Codex handles the review automatically.",
-                        zh: "Codex auto-review 仍可能触发 PermissionRequest hook，因此即使 Codex 自动完成审核，也可能出现需要确认提醒。",
+                        "Codex auto-review can still emit PermissionRequest hooks. Disable approval request reminders above if you only want completion reminders.",
+                        zh: "Codex auto-review 仍可能触发 PermissionRequest hook。如果只想保留完成提醒，可关闭上方的审批请求提醒。",
                         locale: locale)
                 )
             }

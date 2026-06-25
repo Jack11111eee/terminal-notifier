@@ -26,7 +26,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let preferences = PreferencesManager.shared
     private var lastLaunchAtLoginValue: Bool = false
     private var lastClaudeCodeEnabledValue: Bool = false
+    private var lastClaudeWindowAttributionEnabledValue: Bool = false
     private var lastCodexAppEnabledValue: Bool = false
+    private var lastCodexPermissionRequestEnabledValue: Bool = true
     private var currentOverlaySource: NotificationSource = .terminal
     private var currentOverlayTargetWindow: TerminalWindowInfo?
 
@@ -94,28 +96,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastClaudeCodeEnabledValue = claudeCurrent
                 self.setClaudeCodeEnabled(claudeCurrent)
             }
+            let claudeAttributionCurrent = self.preferences.claudeWindowAttributionEnabled
+            if claudeAttributionCurrent != self.lastClaudeWindowAttributionEnabledValue {
+                self.lastClaudeWindowAttributionEnabledValue = claudeAttributionCurrent
+                self.setClaudeWindowAttributionEnabled(claudeAttributionCurrent)
+            }
             let codexCurrent = self.preferences.codexAppEnabled
             if codexCurrent != self.lastCodexAppEnabledValue {
                 self.lastCodexAppEnabledValue = codexCurrent
                 self.setCodexAppEnabled(codexCurrent)
             }
+            let codexPermissionCurrent = self.preferences.codexPermissionRequestEnabled
+            if codexPermissionCurrent != self.lastCodexPermissionRequestEnabledValue {
+                self.lastCodexPermissionRequestEnabledValue = codexPermissionCurrent
+                self.setCodexPermissionRequestEnabled(codexPermissionCurrent)
+            }
             self.statusBarController.refreshMenu()
         }
         lastLaunchAtLoginValue = preferences.launchAtLogin
         lastClaudeCodeEnabledValue = preferences.claudeCodeEnabled
+        lastClaudeWindowAttributionEnabledValue = preferences.claudeWindowAttributionEnabled
         lastCodexAppEnabledValue = preferences.codexAppEnabled
+        lastCodexPermissionRequestEnabledValue = preferences.codexPermissionRequestEnabled
 
         contentMonitor.startMonitoring()
         // 持久化开启时，自愈式确保 hook 已安装并启动监控。
         if preferences.claudeCodeEnabled {
-            TerminalWindowRegistry.requestAccessibilityTrustIfNeeded()
             if !ClaudeHookManager.install() {
                 print("[TerminalNotifier] Claude Code hook install failed")
             }
             claudeMonitor.startMonitoring()
         }
         if preferences.codexAppEnabled {
-            if !CodexHookManager.install() {
+            if !CodexHookManager.install(includePermissionRequest: preferences.codexPermissionRequestEnabled) {
                 print("[TerminalNotifier] Codex hook install failed")
             }
             codexMonitor.startMonitoring()
@@ -132,7 +145,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 切换 Claude Code 状态检测：安装/卸载 hook + 启停监控。
     private func setClaudeCodeEnabled(_ enabled: Bool) {
         if enabled {
-            TerminalWindowRegistry.requestAccessibilityTrustIfNeeded()
             if !ClaudeHookManager.install() {
                 print("[TerminalNotifier] Claude Code hook install failed")
             }
@@ -145,10 +157,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func setClaudeWindowAttributionEnabled(_ enabled: Bool) {
+        if enabled {
+            TerminalWindowRegistry.requestAccessibilityTrustIfNeeded()
+        }
+    }
+
     /// 切换 Codex 状态检测：安装/卸载 hook + 启停监控。
     private func setCodexAppEnabled(_ enabled: Bool) {
         if enabled {
-            if !CodexHookManager.install() {
+            if !CodexHookManager.install(includePermissionRequest: preferences.codexPermissionRequestEnabled) {
                 print("[TerminalNotifier] Codex hook install failed")
             }
             codexMonitor.startMonitoring()
@@ -157,6 +175,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 print("[TerminalNotifier] Codex hook uninstall failed")
             }
             codexMonitor.stopMonitoring()
+        }
+    }
+
+    private func setCodexPermissionRequestEnabled(_ enabled: Bool) {
+        guard preferences.codexAppEnabled else { return }
+        if !CodexHookManager.install(includePermissionRequest: enabled) {
+            print("[TerminalNotifier] Codex hook update failed")
         }
     }
 

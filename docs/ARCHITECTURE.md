@@ -75,7 +75,7 @@ TerminalNotifier/
 - 解析输出中的 `"label"="N"`，N > 0 表示有 badge
 - 当 Terminal **不是**最前面应用 + badge 出现 → 触发提醒
 - 首次启动捕获当前 badge 值作为基线，避免误触发已有 badge
-- **无需辅助功能权限**；Terminal 前台多窗口精确归因由可选 Claude Code hook 触发源处理，badge 基础检测仍在 Terminal 前台时抑制
+- **无需辅助功能权限**；badge 基础检测仍在 Terminal 前台时抑制。Claude 前台多窗口精确归因是单独的可选增强能力。
 
 ### 2.2 悬浮窗口：NSWindow level 101 + visibleFrame
 
@@ -93,7 +93,8 @@ TerminalNotifier/
 ### 2.4 权限需求
 
 - **Badge 基础检测无特殊权限**。通过 `lsappinfo` 命令读取 Terminal Dock badge，无需辅助功能权限或屏幕录制权限
-- **Claude hook 前台多窗口归因需要 opt-in 权限**。开启「检测 Claude Code 状态」后，App 会请求辅助功能权限，用于读取/抬起 Terminal 窗口；用 Terminal 自动化读取窗口 TTY 时，macOS 也可能弹出控制 Terminal 的自动化授权
+- **Claude hook 后台提醒无特殊权限**。开启「检测 Claude Code 状态」只安装/移除 Claude hooks；Terminal 在后台时直接提醒，Terminal 在前台时默认继续抑制。
+- **Claude 前台多窗口归因需要单独 opt-in 权限**。开启「前台多窗口归因」后，App 会请求辅助功能权限，用于读取/抬起 Terminal 窗口；用 Terminal 自动化读取窗口 TTY 时，macOS 也可能弹出控制 Terminal 的自动化授权。
 - **App Sandbox**：关闭。`Process` 执行 CLI 命令、`CGWindowListCopyWindowInfo`、AppleScript 与 AX 窗口操作需要非沙盒环境
 - **Info.plist**：`NSAppleEventsUsageDescription` 说明 Terminal 自动化仅用于把 Claude Code 事件匹配到来源窗口
 - **代码签名**：自签证书 `TerminalNotifierDev`（`codesign --sign "TerminalNotifierDev"`），保持 TCC 权限跨重编译稳定
@@ -104,25 +105,25 @@ TerminalNotifier/
 
 - **hook → App 通道**：`ClaudeHookManager` 在 `~/.claude/settings.json` 注册两条 command hook——`Notification`（`matcher: permission_prompt`）和 `Stop`。hook 经 `/bin/sh` 用 `mktemp` 在 `~/Library/Application Support/TerminalNotifier/claude-events/` 投放 JSON 标记文件（macOS BSD `date` 无 `%N`，故用 mktemp 保唯一）。
 - **marker 格式**：`{"event":"needs_confirm|done","source":"claude","tty":"ttysXXX","timestamp":...}`。旧版空 marker 仍按文件名前缀兼容。
-- **消费**：`ClaudeCodeMonitor` 每秒轮询该目录，解析 JSON → `MessageProvider.Category` → 删除文件。Terminal 后台时直接回调 delegate；Terminal 前台时只在 marker 能映射到非最上层 Terminal 窗口时回调。
-- **窗口归因**：`TerminalWindowRegistry` 用 `CGWindowListCopyWindowInfo` 获取可见 Terminal 窗口前后顺序，用 Terminal AppleScript、窗口标题和 AX 树把 marker 的 TTY 映射到 `TerminalWindowInfo`。归因失败时在 Terminal 前台继续抑制，避免误弹。
+- **消费**：`ClaudeCodeMonitor` 每秒轮询该目录，解析 JSON → `MessageProvider.Category` → 删除文件。Terminal 后台时直接回调 delegate；Terminal 前台时默认继续抑制。
+- **窗口归因**：`PreferencesManager.claudeWindowAttributionEnabled`（默认关）单独控制前台多窗口归因。开启后，`TerminalWindowRegistry` 用 `CGWindowListCopyWindowInfo` 获取可见 Terminal 窗口前后顺序，用 Terminal AppleScript、窗口标题和 AX 树把 marker 的 TTY 映射到 `TerminalWindowInfo`。归因失败时在 Terminal 前台继续抑制，避免误弹。
 - **安全合并**：`install()/uninstall()` 用 `JSONSerialization` 只增删带 `# terminal-notifier-hook` 标记的 entry，幂等，写前时间戳备份。**权衡**：重写会规整文件格式/键序。
 - **状态机**：新增 `.agentTrigger(AgentNotificationEvent)`，复用现有掉落/气泡/跳回/冷却；hook 提醒携带 `NotificationSource` 与可选目标窗口，不参与「N 条」合并，也不做 2 分钟 longWait 升级。
-- **开关**：`PreferencesManager.claudeCodeEnabled`（默认关）；`AppDelegate` 观察其变化触发 install/uninstall + 启停监控，启动时若开启则幂等自愈。
-- **跳转**：用户关闭提醒且开启「关闭提醒后跳转来源应用」时，Claude 多窗口事件优先通过 AX 抬起来源 Terminal 窗口；没有来源窗口则激活 Terminal.app。
+- **开关**：`PreferencesManager.claudeCodeEnabled`（默认关）触发 install/uninstall + 启停监控，启动时若开启则幂等自愈；`claudeWindowAttributionEnabled`（默认关）只控制前台窗口归因和权限请求。
+- **跳转**：用户关闭提醒且开启「关闭提醒后跳转来源应用」时，Claude 多窗口事件在归因成功后优先通过 AX 抬起来源 Terminal 窗口；没有来源窗口则激活 Terminal.app。
 - **限制**：Esc 中断无对应 hook 不可检测；不处理 idle；前台门控仅识别 Terminal.app。
 
 ### 2.6 Codex 集成（第三触发源）
 
 基于 Codex lifecycle hooks 的语义化信号源：
 
-- **hook → App 通道**：`CodexHookManager` 在 `~/.codex/hooks.json` 注册两条 command hook——`PermissionRequest` 和 `Stop`。hook 经 `/bin/sh` 用 `mktemp` 在 `~/Library/Application Support/TerminalNotifier/codex-events/` 投放标记文件。
-- **消费**：`CodexAppMonitor` 每秒轮询该目录，解析类型→Codex 专属 `MessageProvider.Category`→删文件→Codex App 非前台则回调 delegate。
-- **安全合并**：`install()/uninstall()` 用 `JSONSerialization` 只增删带 `# terminal-notifier-codex-hook` 标记的 entry，幂等，写前时间戳备份。若现有 `hooks.json` 不是可合并 JSON object，则取消写入并保留原文件。
+- **hook → App 通道**：`CodexHookManager` 在 `~/.codex/hooks.json` 注册 command hook。`Stop` 完成提醒始终随 Codex 检测安装；`PermissionRequest` 审批请求提醒由 `codexPermissionRequestEnabled` 单独控制。hook 经 `/bin/sh` 用 `mktemp` 在 `~/Library/Application Support/TerminalNotifier/codex-events/` 投放标记文件。
+- **消费**：`CodexAppMonitor` 每秒轮询该目录，解析类型→Codex 专属 `MessageProvider.Category`→删文件→Codex App 非前台则回调 delegate；若 `codexPermissionRequestEnabled` 关闭，则防御性忽略遗留的 `needs_confirm` marker。
+- **安全合并**：`install(includePermissionRequest:)`/`uninstall()` 用 `JSONSerialization` 只增删 Terminal Notifier 管理的 entry，幂等，写前时间戳备份。新 hook 使用事件级 marker 和 `statusMessage` 便于在 Codex 中识别，并兼容移除旧版 `# terminal-notifier-codex-hook` entry。若现有 `hooks.json` 不是可合并 JSON object，则取消写入并保留原文件。
 - **来源处理**：状态机记录 `NotificationSource`，初次显示和消息更新都把来源传给 `AppDelegate`；关闭提醒后的跳转会激活来源应用（Terminal 或 Codex）。
-- **开关**：`PreferencesManager.codexAppEnabled`（默认关）；`AppDelegate` 观察其变化触发 install/uninstall + 启停监控，启动时若开启则幂等自愈。
-- **信任要求**：Codex 会跳过未信任的 non-managed hooks。用户开启后需要重启或重新打开 Codex，并在 Codex 设置 → 钩子里审核并信任 `PermissionRequest` 和 `Stop` 两项。
-- **已知问题**：Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook，因此确认提醒可能早于或独立于自动审核结果出现。
+- **开关**：`PreferencesManager.codexAppEnabled`（默认关）控制 Codex hooks 总开关；`codexPermissionRequestEnabled`（默认开）控制是否安装和响应 `PermissionRequest` 审批请求提醒。
+- **信任要求**：Codex 会跳过未信任的 non-managed hooks。用户开启或修改 Codex hooks 后需要退出并重新打开 Codex，让 hooks 重新加载；随后在 Codex 设置 → 钩子里信任 `Terminal Notifier: Codex approval reminder`（`PermissionRequest`，如已开启）和 `Terminal Notifier: Codex completion reminder`（`Stop`）。
+- **auto-review**：Codex 的 `auto-review` 流程仍可能发出 `PermissionRequest` hook，因此确认提醒可能早于或独立于自动审核结果出现；用户可关闭审批请求提醒，只保留 `Stop` 完成提醒。
 - **限制**：Codex hooks 是用户级配置，可能同时被本机 Codex App / CLI / IDE Extension 采用；当前不区分具体 Codex 入口，也不读取 Codex App 内部实时运行状态。受管理 hook 会追加 `~/Library/Application Support/TerminalNotifier/codex-hook.log`，用于区分 hook 未执行和 App 端未提醒。
 
 ---
@@ -548,7 +549,9 @@ class PreferencesManager: ObservableObject {
     @AppStorage("switchToTerminal")     var switchToTerminal: Bool = false
     @AppStorage("selectedPet")          var selectedPet: String = "pixel_cat"
     @AppStorage("claudeCodeEnabled")    var claudeCodeEnabled: Bool = false
+    @AppStorage("claudeWindowAttributionEnabled") var claudeWindowAttributionEnabled: Bool = false
     @AppStorage("codexAppEnabled")      var codexAppEnabled: Bool = false
+    @AppStorage("codexPermissionRequestEnabled") var codexPermissionRequestEnabled: Bool = true
 
     var isInDNDPeriod: Bool { get }
     var resolvedLocale: String { get }                  // = resolveLocale(language)

@@ -3,7 +3,7 @@ import Foundation
 /// 管理写入 ~/.codex/hooks.json 的 Codex hook。
 ///
 /// 开启「检测 Codex 状态」时 install()，关闭时 uninstall()。
-/// 只增删带 `Constants.codexHookMarker` 标记的 entry，保留用户其它 hook。
+/// 只增删 Terminal Notifier 管理的 entry，保留用户其它 hook。
 enum CodexHookManager {
 
     private static var hooksURL: URL {
@@ -14,17 +14,17 @@ enum CodexHookManager {
     private static var needsConfirmCommand: String {
         let rel = Constants.codexEventsRelativePath
         let log = Constants.codexHookLogRelativePath
-        return "mkdir -p \"$HOME/\(rel)\"; date '+needs_confirm %Y-%m-%d %H:%M:%S' >> \"$HOME/\(log)\"; mktemp \"$HOME/\(rel)/\(Constants.claudeEventNeedsConfirm).XXXXXX\" >/dev/null 2>&1 \(Constants.codexHookMarker)"
+        return "mkdir -p \"$HOME/\(rel)\"; date '+permission_request %Y-%m-%d %H:%M:%S' >> \"$HOME/\(log)\"; mktemp \"$HOME/\(rel)/\(Constants.claudeEventNeedsConfirm).XXXXXX\" >/dev/null 2>&1 \(Constants.codexPermissionHookMarker)"
     }
 
     private static var doneCommand: String {
         let rel = Constants.codexEventsRelativePath
         let log = Constants.codexHookLogRelativePath
-        return "mkdir -p \"$HOME/\(rel)\"; date '+done %Y-%m-%d %H:%M:%S' >> \"$HOME/\(log)\"; mktemp \"$HOME/\(rel)/\(Constants.claudeEventDone).XXXXXX\" >/dev/null 2>&1 \(Constants.codexHookMarker)"
+        return "mkdir -p \"$HOME/\(rel)\"; date '+stop %Y-%m-%d %H:%M:%S' >> \"$HOME/\(log)\"; mktemp \"$HOME/\(rel)/\(Constants.claudeEventDone).XXXXXX\" >/dev/null 2>&1 \(Constants.codexStopHookMarker)"
     }
 
     @discardableResult
-    static func install() -> Bool {
+    static func install(includePermissionRequest: Bool = true) -> Bool {
         guard var settings = loadSettings() else { return false }
         guard var hooks = loadHooks(from: settings) else { return false }
         guard let permissionGroups = loadHookGroups(from: hooks, event: "PermissionRequest"),
@@ -32,8 +32,18 @@ enum CodexHookManager {
             return false
         }
 
-        hooks["PermissionRequest"] = ensureEntry(in: permissionGroups, command: needsConfirmCommand)
-        hooks["Stop"] = ensureEntry(in: stopGroups, command: doneCommand)
+        if includePermissionRequest {
+            hooks["PermissionRequest"] = ensureEntry(
+                in: permissionGroups,
+                command: needsConfirmCommand,
+                statusMessage: "Terminal Notifier: Codex approval reminder")
+        } else {
+            setGroups(removeManagedEntries(from: permissionGroups), on: &hooks, event: "PermissionRequest")
+        }
+        hooks["Stop"] = ensureEntry(
+            in: stopGroups,
+            command: doneCommand,
+            statusMessage: "Terminal Notifier: Codex completion reminder")
         settings["hooks"] = hooks
         return save(settings)
     }
@@ -58,15 +68,43 @@ enum CodexHookManager {
         return save(settings)
     }
 
-    private static func ensureEntry(in groups: [[String: Any]], command: String) -> [[String: Any]] {
-        let group: [String: Any] = ["hooks": [["type": "command", "command": command]]]
-        let kept = groups.filter { !groupContainsMarker($0) }
+    private static func ensureEntry(
+        in groups: [[String: Any]],
+        command: String,
+        statusMessage: String
+    ) -> [[String: Any]] {
+        let group: [String: Any] = [
+            "hooks": [[
+                "type": "command",
+                "command": command,
+                "statusMessage": statusMessage
+            ]]
+        ]
+        let kept = removeManagedEntries(from: groups)
         return kept + [group]
+    }
+
+    private static func removeManagedEntries(from groups: [[String: Any]]) -> [[String: Any]] {
+        groups.filter { !groupContainsMarker($0) }
+    }
+
+    private static func setGroups(
+        _ groups: [[String: Any]],
+        on hooks: inout [String: Any],
+        event: String
+    ) {
+        if groups.isEmpty { hooks.removeValue(forKey: event) }
+        else { hooks[event] = groups }
     }
 
     private static func groupContainsMarker(_ group: [String: Any]) -> Bool {
         guard let hooks = group["hooks"] as? [[String: Any]] else { return false }
-        return hooks.contains { ($0["command"] as? String)?.contains(Constants.codexHookMarker) == true }
+        return hooks.contains {
+            guard let command = $0["command"] as? String else { return false }
+            return command.contains(Constants.codexHookMarker)
+                || command.contains(Constants.codexPermissionHookMarker)
+                || command.contains(Constants.codexStopHookMarker)
+        }
     }
 
     private static func loadSettings() -> [String: Any]? {
