@@ -345,6 +345,76 @@ private struct NotificationSettingsPane: View {
                     isOn: $preferences.switchToTerminal
                 )
             }
+
+            SettingsCard(
+                title: settingsLang("Reminder Behavior", zh: "提醒行为", locale: locale),
+                systemImage: "clock.arrow.2.circlepath",
+                subtitle: settingsLang(
+                    "Control how long reminders stay and how snoozing works.",
+                    zh: "控制提醒的驻留与延后行为。",
+                    locale: locale)
+            ) {
+                SettingsToggleRow(
+                    title: settingsLang("Auto-dismiss", zh: "超时自动收起", locale: locale),
+                    subtitle: preferences.autoDismissEnabled
+                        ? settingsLang(
+                            "After the set duration, an unacknowledged reminder collapses to a menu-bar dot.",
+                            zh: "猫挂屏超过设定时长且未处理，自动收起为菜单栏红点，不再遮挡屏幕。",
+                            locale: locale)
+                        : settingsLang(
+                            "The cat stays on screen until you dismiss it manually.",
+                            zh: "猫将一直挂在屏幕上直到手动关闭。",
+                            locale: locale),
+                    isOn: $preferences.autoDismissEnabled
+                )
+
+                if preferences.autoDismissEnabled {
+                    SettingsDivider()
+                    SettingsControlRow(
+                        title: settingsLang("Duration", zh: "时长", locale: locale),
+                        subtitle: settingsLang("How long the cat stays before collapsing.", zh: "猫挂屏多久后自动收起。", locale: locale)
+                    ) {
+                        Picker("", selection: $preferences.autoDismissSeconds) {
+                            ForEach(autoDismissOptions, id: \.self) { sec in
+                                Text(autoDismissLabel(sec, locale: locale)).tag(sec)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(width: 104)
+                    }
+                }
+
+                SettingsDivider()
+
+                SettingsControlRow(
+                    title: settingsLang("Snooze duration", zh: "「稍后」再提醒", locale: locale),
+                    subtitle: settingsLang(
+                        "After tapping \"Later\", the reminder reappears after this delay.",
+                        zh: "点击提醒气泡上的「稍后」后，猫会收起并在此时长后重新弹出。",
+                        locale: locale)
+                ) {
+                    Picker("", selection: $preferences.snoozeMinutes) {
+                        ForEach(snoozeOptions, id: \.self) { min in
+                            Text(settingsLang("\(min) min", zh: "\(min) 分钟", locale: locale)).tag(min)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 104)
+                }
+            }
+        }
+    }
+
+    private var autoDismissOptions: [Int] { [30, 60, 120, 300] }
+    private var snoozeOptions: [Int] { [5, 10, 30] }
+
+    private func autoDismissLabel(_ sec: Int, locale: String) -> String {
+        switch sec {
+        case 120: return settingsLang("2 min", zh: "2 分钟", locale: locale)
+        case 300: return settingsLang("5 min", zh: "5 分钟", locale: locale)
+        default: return settingsLang("\(sec)s", zh: "\(sec) 秒", locale: locale)
         }
     }
 }

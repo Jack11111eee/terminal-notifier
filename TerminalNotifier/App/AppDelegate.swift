@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var stateMachine: NotificationStateMachine!
     private var settingsController: SettingsWindowController!
     private var historyController: HistoryWindowController!
+    private var selfCheckController: SelfCheckWindowController?
     private var historyManager = NotificationHistoryManager()
     private var soundManager = SoundManager()
     private let preferences = PreferencesManager.shared
@@ -46,11 +47,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsController = SettingsWindowController()
         historyController = HistoryWindowController()
         stateMachine = NotificationStateMachine()
+        stateMachine.delegate = self
+        statusBarController.pendingInfoProvider = { [weak self] in
+            self?.stateMachine.pendingInfo
+        }
+        statusBarController.onPendingReactivated = { [weak self] in
+            self?.reactivatePending()
+        }
+        statusBarController.onPendingCleared = { [weak self] in
+            self?.stateMachine.handleEvent(.clearPending)
+        }
+        overlayController.onSnoozeRequested = { [weak self] in
+            self?.stateMachine.handleEvent(.userSnoozed)
+        }
 
         contentMonitor.delegate = self
         claudeMonitor.delegate = self
         codexMonitor.delegate = self
-        stateMachine.delegate = self
 
         overlayController.onDismissRequested = { [weak self] in
             self?.stateMachine.handleEvent(.userDismissed)
@@ -80,6 +93,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         statusBarController.onHistoryClicked = { [weak self] in self?.showHistory() }
+        statusBarController.onSelfCheckClicked = { [weak self] in self?.showSelfCheck() }
         statusBarController.onQuitClicked = { NSApplication.shared.terminate(nil) }
 
         NotificationCenter.default.addObserver(
@@ -187,12 +201,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showOverlay(
         message: String,
+        category: MessageProvider.Category,
         source: NotificationSource,
         targetWindow: TerminalWindowInfo?
     ) {
-        tnLog("showOverlay: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod)")
-        guard preferences.enabled, !preferences.isInDNDPeriod else {
-            tnLog("showOverlay BLOCKED: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod)")
+        let focusActive = isSystemFocusActive()
+        tnLog("showOverlay: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod) focus=\(focusActive)")
+        guard preferences.enabled, !preferences.isInDNDPeriod, !focusActive else {
+            tnLog("showOverlay BLOCKED: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod) focus=\(focusActive)")
             return
         }
         currentOverlayTargetWindow = targetWindow
@@ -200,12 +216,88 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ?? TerminalScreenLocator.locateScreen(ownerName: source.windowOwnerName)
         tnLog("showOverlay: calling overlayController.show screen=\(screen)")
         overlayController.show(on: screen, message: message)
-        soundManager.playNotificationSound()
+        soundManager.playNotificationSound(for: category)
         tnLog("showOverlay: done")
     }
 
     private func showHistory() {
-        historyController.showHistory(historyManager: historyManager)
+        historyController.showHistory(historyManager: historyManager) { record in
+            if let tty = record.tty,
+               let window = TerminalWindowRegistry.window(forTTY: tty) {
+                TerminalWindowRegistry.activate(window)
+            } else {
+                // 找不到原窗口（已关闭/tty 复用）时降级激活 Terminal 本体，不打扰用户。
+                TerminalWindowRegistry.activate(nil)
+            }
+        }
+    }
+
+    private func showSelfCheck() {
+        if selfCheckController == nil {
+            selfCheckController = SelfCheckWindowController()
+        }
+        selfCheckController?.show()
+    }
+
+    /// 系统专注模式（Focus / DND）是否激活。
+    /// 优先读 ~/Library/DoNotDisturb/DB/Assertions.json，失败回退 com.apple.ncprefs 的 dnd_prefs。
+    /// 所有读法都失败时返回 false：宁可让提醒正常弹，也不能因检测失败静默吞掉提醒。
+    private func isSystemFocusActive() -> Bool {
+        let assertionsPath = NSHomeDirectory() + "/Library/DoNotDisturb/DB/Assertions.json"
+        if let data = FileManager.default.contents(atPath: assertionsPath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let records = json["data"] as? [[String: Any]],
+           !records.isEmpty {
+            return true
+        }
+
+        // 回退路径：com.apple.ncprefs 的 dnd_prefs 是 base64 包装的嵌套 plist。
+        // 仅当能解码出 userPref.enabled == true 才判定为 Focus 开启；
+        // 任何一步失败都返回 false（宁可不静默，不可误静默）。
+        let ncprefsPath = NSHomeDirectory() + "/Library/Preferences/com.apple.ncprefs.plist"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/plutil")
+        process.arguments = ["-extract", "dnd_prefs", "xml1", "-o", "-", "--", ncprefsPath]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return false }
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            return Self.dndPrefsIndicatesEnabled(output)
+        } catch {
+            return false
+        }
+    }
+
+    /// 解析 plutil 输出的 dnd_prefs（base64 嵌套 plist），只在能确认 userPref.enabled == true 时返回 true。
+    /// 判定失败（结构漂移、键缺失、解码失败）一律返回 false，由调用方视为「非 Focus」。
+    private static func dndPrefsIndicatesEnabled(_ plutilOutput: String) -> Bool {
+        // plutil -extract dnd_prefs 输出顶层即该键的值：一个 <data> 节点承载嵌套 plist。
+        guard let nestedData = try? PropertyListSerialization.propertyList(
+            from: Data(plutilOutput.utf8), options: [], format: nil
+        ) as? Data,
+              let nested = try? PropertyListSerialization.propertyList(
+                  from: nestedData, options: [], format: nil
+              ) as? [String: Any],
+              let userPref = nested["userPref"] as? [String: Any],
+              let enabled = userPref["enabled"] as? Bool
+        else { return false }
+        return enabled
+    }
+
+    /// 菜单栏「待处理提醒」触发：立刻把挂起消息重弹到屏幕上，并清掉挂起状态。
+    /// 用户随后按 dismiss/snooze 的常规路径处理。
+    private func reactivatePending() {
+        guard let info = stateMachine.pendingInfo else { return }
+        stateMachine.handleEvent(.clearPending)
+        stateMachine.handleEvent(.agentTrigger(AgentNotificationEvent(
+            category: info.category,
+            source: info.source,
+            tty: nil,
+            targetWindow: info.targetWindow)))
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -328,10 +420,15 @@ extension AppDelegate: NotificationStateMachineDelegate {
     func stateMachine(_ sm: NotificationStateMachine, didTransitionTo state: NotificationState) {
         tnLog("stateMachine → \(state)")
         switch state {
-        case .idle: statusBarController.updateIcon(state: .normal)
+        case .idle:
+            statusBarController.updateIcon(state: .normal)
+            statusBarController.refreshMenu()
         case .detected: statusBarController.updateIcon(state: .notifying)
         case .showing: break
         case .animatingOut: break
+        case .pending:
+            statusBarController.updateIcon(state: .pending)
+            statusBarController.refreshMenu()
         }
     }
     func stateMachine(
@@ -349,8 +446,10 @@ extension AppDelegate: NotificationStateMachineDelegate {
             timestamp: Date(),
             badgeLabel: source.historyBadgeLabel,
             message: message,
-            category: category.rawValue))
-        showOverlay(message: message, source: source, targetWindow: targetWindow)
+            category: category.rawValue,
+            tty: sm.activeTTY,
+            windowTitle: targetWindow?.title))
+        showOverlay(message: message, category: category, source: source, targetWindow: targetWindow)
     }
     func stateMachine(
         _ sm: NotificationStateMachine,

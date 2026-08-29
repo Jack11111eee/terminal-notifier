@@ -4,10 +4,30 @@ class SpeechBubbleView: NSView {
     var text: String = "" {
         didSet { needsDisplay = true }
     }
+    var onSnoozeTapped: (() -> Void)?
+    var snoozeTitle: String = "" {
+        didSet { snoozeButton.title = snoozeTitle }
+    }
+
+    private let snoozeButton: NSButton = {
+        let button = NSButton(title: "", target: nil, action: nil)
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        button.contentTintColor = NSColor.secondaryLabelColor
+        return button
+    }()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        snoozeButton.target = self
+        snoozeButton.action = #selector(snoozeClicked)
+        addSubview(snoozeButton)
+    }
+
+    @objc private func snoozeClicked() {
+        onSnoozeTapped?()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -20,8 +40,22 @@ class SpeechBubbleView: NSView {
             with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
-        let height = max(64, ceil(measured.height) + contentInsets.top + contentInsets.bottom)
+        // 底部额外为「稍后」按钮预留空间
+        let snoozeReserve: CGFloat = 24
+        let height = max(64, ceil(measured.height) + contentInsets.top + contentInsets.bottom + snoozeReserve)
         return NSSize(width: width, height: height)
+    }
+
+    override func layout() {
+        super.layout()
+        let drawingBounds = bounds.insetBy(dx: 8, dy: 6)
+        let btnSize = NSSize(width: 44, height: 18)
+        snoozeButton.frame = NSRect(
+            x: drawingBounds.maxX - btnSize.width - 12,
+            y: drawingBounds.minY + 8,
+            width: btnSize.width,
+            height: btnSize.height
+        )
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -59,10 +93,13 @@ class SpeechBubbleView: NSView {
             with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
             options: drawOptions
         )
-        let textHeight = min(ceil(measured.height), bubbleRect.height - vInset * 2)
+        // 底部要留白给按钮，文本可用高度扣掉 snooze 预留
+        let snoozeReserve: CGFloat = 24
+        let maxTextHeight = bubbleRect.height - vInset * 2 - snoozeReserve
+        let textHeight = min(ceil(measured.height), maxTextHeight)
         let textRect = NSRect(
             x: bubbleRect.minX + hInset,
-            y: bubbleRect.midY - textHeight / 2,
+            y: bubbleRect.minY + snoozeReserve + (maxTextHeight - textHeight) / 2 + vInset / 2,
             width: availableWidth,
             height: textHeight
         )

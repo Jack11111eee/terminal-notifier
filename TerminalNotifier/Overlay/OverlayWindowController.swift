@@ -24,6 +24,7 @@ class OverlayWindowController {
     var onDropAnimationComplete: (() -> Void)?
     var onJumpBackComplete: (() -> Void)?
     var onDismissRequested: (() -> Void)?
+    var onSnoozeRequested: (() -> Void)?
 
     func show(on screen: NSScreen,
               message: String) {
@@ -58,6 +59,9 @@ class OverlayWindowController {
         )
         contentView.onTap = { [weak self] in
             self?.onDismissRequested?()
+        }
+        contentView.onSnooze = { [weak self] in
+            self?.onSnoozeRequested?()
         }
 
         window.contentView = contentView

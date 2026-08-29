@@ -12,7 +12,8 @@ TerminalNotifier/
 │   ├── Info.plist
 │   ├── App/
 │   │   ├── main.swift                         # 应用入口（手动 NSApplication 启动）
-│   │   ├── AppDelegate.swift                  # 组装所有模块
+│   │   ├── AppDelegate.swift                  # 组装所有模块（含系统专注模式拦截）
+│   │   ├── SelfCheckWindowController.swift    # 自检与修复窗口（权限/hook 四项检查）
 │   │   └── Constants.swift                    # 全局常量
 │   ├── MenuBar/
 │   │   └── StatusBarController.swift          # 菜单栏猫图标（normal/notifying/paused 三态各一张 PNG）+ 下拉菜单
@@ -163,6 +164,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // LSUIElement = YES → 无 Dock 图标（纯菜单栏应用）
 // LSMinimumSystemVersion = 13.0
 ```
+
+**系统专注模式联动：** `showOverlay` 在现有 `enabled`/`isInDNDPeriod` 守卫上追加 `!isSystemFocusActive()`。系统 Focus 开启时提醒静默——事件仍进历史、菜单栏仍变红点，但不掉猫、不发声。拦截点在视觉/听觉出口，**不动状态机**。`isSystemFocusActive()` 优先读 `~/Library/DoNotDisturb/DB/Assertions.json`，失败回退 `plutil` 读 `com.apple.ncprefs.plist`，两条都失败返回 `false`（视为 Focus 关闭，绝不因检测失败静默提醒）。
 
 ### 3.2 MenuBar / StatusBarController
 
@@ -611,6 +614,8 @@ struct NotificationRecord: Codable, Identifiable {
     let badgeLabel: String
     let message: String
     let category: MessageProvider.Category
+    let tty: String?           // Claude hook 来源的 TTY，用于点击反查窗口；badge 来源与旧记录为 nil
+    let windowTitle: String?   // 触发时目标窗口标题，仅供展示
 }
 
 class NotificationHistoryManager {
@@ -623,21 +628,35 @@ class NotificationHistoryManager {
 }
 ```
 
-存储：UserDefaults + JSON 编码，最多 100 条。
+存储：UserDefaults + JSON 编码，最多 100 条。旧版本记录无 `tty`/`windowTitle` 键，Codable 可选字段解码为 nil 不崩。
+
+**点击行跳窗**：HistoryView 每行可点（`onRecordTapped` 回调由 `HistoryWindowController.showHistory(historyManager:onRecordTapped:)` 注入）。AppDelegate 收到点击后按 `tty` 调 `TerminalWindowRegistry.window(forTTY:)` 反查窗口，查到激活具体窗口，查不到降级 `activate(nil)` 激活 Terminal 本体；badge 来源记录（`tty == nil`）直接走降级。点击后历史窗口保持打开。
 
 ### 3.19 Sound / SoundManager
 
+分级音效：需确认类（`needsConfirm`/`codexNeedsConfirm`）用更引人注目的 `Funk`，其余沿用温和的 `Glass`。调用方在 `showOverlay` 里按 `category` 透传。
+
 ```swift
 class SoundManager {
-    private var sound: NSSound?
+    private var sound: NSSound?          // Glass：温和默认
+    private var confirmSound: NSSound?   // Funk：需确认
 
-    func playNotificationSound() {
-        guard PreferencesManager.shared.soundEnabled else { return }
-        sound = NSSound(named: "Glass")   // 系统音；nil 时回退 NSSound.beep()
-        sound?.play()
-    }
+    func playNotificationSound()                          // 默认 .newNotification
+    func playNotificationSound(for category: MessageProvider.Category)
 }
 ```
+
+### 3.20 App / SelfCheckWindowController
+
+菜单栏「自检与修复」入口，SwiftUI 窗口列出四项检查，失败时提供一键修复。检查逻辑全部内聚在本文件，不污染现有 manager。
+
+| 检查项 | 判定 | 修复 |
+|--------|------|------|
+| 辅助功能权限 | `AXIsProcessTrusted()` | 调 `TerminalWindowRegistry.requestAccessibilityTrustIfNeeded()` |
+| Claude hook | `~/.claude/settings.json` 含 `claudeHookMarker` | 调 `ClaudeHookManager.install()` |
+| Codex hook | `~/.codex/hooks.json` 含 `codexHookMarker`（未启用时灰显） | 调 `CodexHookManager.install()` |
+| Claude 配置备份 | `~/.claude/` 下存在 `settings.json.tn-backup-*` | 无按钮，提示下次自动生成 |
+
 
 ---
 
@@ -678,7 +697,7 @@ class SoundManager {
 5. `AppDelegate` 调 `TerminalScreenLocator` 定位屏幕
 6. `AppDelegate` 调 `MessageProvider` 获取随机话语
 7. `OverlayWindowController.show()` → 创建窗口 → 掉落动画 → 显示气泡
-8. `SoundManager` 播放音效，`NotificationHistoryManager` 记录
+8. `SoundManager` 按 `category` 播放分级音效（需确认类 Funk / 其余 Glass），`NotificationHistoryManager` 记录（含 `tty`/`windowTitle` 供事后跳窗）
 9. 用户点击/Esc → `.userDismissed` → `.animatingOut` → 跳回动画
 10. 动画完成 → `.idle`，可选激活 Terminal.app，冷却计时 10 秒
 

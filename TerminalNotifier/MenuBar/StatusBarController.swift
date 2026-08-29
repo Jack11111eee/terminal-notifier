@@ -8,7 +8,12 @@ class StatusBarController {
     var onSettingsClicked: (() -> Void)?
     var onPauseToggled: ((Bool) -> Void)?
     var onHistoryClicked: (() -> Void)?
+    var onSelfCheckClicked: (() -> Void)?
     var onQuitClicked: (() -> Void)?
+    var onPendingReactivated: (() -> Void)?
+    var onPendingCleared: (() -> Void)?
+    /// 由 AppDelegate 注入，决定「待处理提醒」菜单项的可见性与文案。
+    var pendingInfoProvider: (() -> NotificationStateMachine.PendingInfo?)?
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -83,6 +88,18 @@ class StatusBarController {
         codexItem.isEnabled = false
         menu.addItem(codexItem)
 
+        if let pending = pendingInfoProvider?() {
+            let preview = String(pending.message.prefix(20))
+            let pendingItem = NSMenuItem(
+                title: "\(menuLang("Pending", zh: "待处理")): \(preview)\(pending.message.count > 20 ? "…" : "")",
+                action: #selector(pendingReactivateAction),
+                keyEquivalent: ""
+            )
+            pendingItem.image = Self.createAlertCatIcon(size: 16)
+            pendingItem.target = self
+            menu.addItem(pendingItem)
+        }
+
         menu.addItem(.separator())
         menu.addItem(sectionHeader(menuLang("Actions", zh: "操作")))
 
@@ -94,6 +111,15 @@ class StatusBarController {
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        let selfCheckItem = NSMenuItem(
+            title: menuLang("Self-Check & Repair", zh: "自检与修复"),
+            action: #selector(selfCheckAction),
+            keyEquivalent: ""
+        )
+        selfCheckItem.image = NSImage(systemSymbolName: "stethoscope", accessibilityDescription: nil)
+        selfCheckItem.target = self
+        menu.addItem(selfCheckItem)
 
         let pauseItem = NSMenuItem(
             title: isPaused ? menuLang("Resume Notifications", zh: "恢复提醒") : menuLang("Pause Notifications", zh: "暂停提醒"),
@@ -113,6 +139,17 @@ class StatusBarController {
         historyItem.target = self
         menu.addItem(historyItem)
 
+        if pendingInfoProvider?() != nil {
+            let clearPendingItem = NSMenuItem(
+                title: menuLang("Clear Pending Reminder", zh: "清除待处理提醒"),
+                action: #selector(pendingClearAction),
+                keyEquivalent: ""
+            )
+            clearPendingItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+            clearPendingItem.target = self
+            menu.addItem(clearPendingItem)
+        }
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
@@ -131,7 +168,7 @@ class StatusBarController {
             switch state {
             case .normal:
                 button.image = Self.createColoredCatIcon(size: Constants.menuBarIconSize)
-            case .notifying:
+            case .notifying, .pending:
                 button.image = Self.createAlertCatIcon(size: Constants.menuBarIconSize)
             case .paused:
                 button.image = Self.createPausedIcon(size: Constants.menuBarIconSize)
@@ -152,7 +189,10 @@ class StatusBarController {
         onPauseToggled?(isPaused)
     }
     @objc private func historyAction() { onHistoryClicked?() }
+    @objc private func selfCheckAction() { onSelfCheckClicked?() }
     @objc private func quitAction() { onQuitClicked?() }
+    @objc private func pendingReactivateAction() { onPendingReactivated?() }
+    @objc private func pendingClearAction() { onPendingCleared?() }
 
     // MARK: - Colored Cat Icon (visible on any menu bar)
 

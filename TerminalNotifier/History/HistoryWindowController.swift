@@ -4,8 +4,12 @@ import SwiftUI
 class HistoryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
-    func showHistory(historyManager: NotificationHistoryManager) {
-        let historyView = HistoryView(historyManager: historyManager)
+    func showHistory(
+        historyManager: NotificationHistoryManager,
+        onRecordTapped: ((NotificationRecord) -> Void)? = nil
+    ) {
+        var historyView = HistoryView(historyManager: historyManager)
+        historyView.onRecordTapped = onRecordTapped
         let hostingController = NSHostingController(rootView: historyView)
 
         if let existing = window {
