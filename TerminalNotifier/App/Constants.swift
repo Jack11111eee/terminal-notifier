@@ -8,6 +8,11 @@ enum Constants {
     static let menuBarIconSize: CGFloat = 22
     static let defaultCooldown: Int = 10
     static let longWaitThreshold: TimeInterval = 120
+    /// 提醒挂屏达到该时长且用户无操作，自动收起为菜单栏待处理项（不再挂屏）。
+    /// 0 表示完全禁用。
+    static let autoDismissSecondsDefault: Int = 60
+    /// 点击「稍后」后再次提醒的默认延迟（秒）。
+    static let snoozeMinutesDefault: Int = 10
 
     // MARK: - Claude Code 集成
 
@@ -84,4 +89,6 @@ enum MenuBarIconState {
     case normal
     case notifying
     case paused
+    /// 「待处理提醒」（自动降级或暂延后）时的红点态图标。复用 notifying 素材。
+    case pending
 }

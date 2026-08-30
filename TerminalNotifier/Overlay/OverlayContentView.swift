@@ -2,6 +2,9 @@ import AppKit
 
 class OverlayContentView: NSView {
     var onTap: (() -> Void)?
+    var onSnooze: (() -> Void)? {
+        didSet { bubbleView.onSnoozeTapped = onSnooze }
+    }
     let petView: PetSpriteView
     let bubbleView: SpeechBubbleView
 
@@ -21,6 +24,7 @@ class OverlayContentView: NSView {
         addSubview(petView)
         addSubview(bubbleView)
         bubbleView.text = message
+        bubbleView.snoozeTitle = PreferencesManager.shared.resolvedLocale == "zh" ? "稍后" : "Later"
 
         layoutViews(petSize: petSize)
     }

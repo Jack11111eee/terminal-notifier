@@ -2,6 +2,8 @@ import SwiftUI
 
 struct HistoryView: View {
     let historyManager: NotificationHistoryManager
+    /// 点击记录时回调（跳转对应窗口），由 HistoryWindowController 注入。
+    var onRecordTapped: ((NotificationRecord) -> Void)?
 
     @AppStorage("language") private var language: String = "system"
     @State private var records: [NotificationRecord] = []
@@ -21,6 +23,8 @@ struct HistoryView: View {
                     LazyVStack(spacing: 10) {
                         ForEach(records) { record in
                             HistoryRecordRow(record: record, locale: locale)
+                                .contentShape(Rectangle())
+                                .onTapGesture { onRecordTapped?(record) }
                         }
                     }
                     .padding(18)
@@ -46,6 +50,11 @@ struct HistoryView: View {
                 Text(historyLang("\(records.count) recent records", zh: "最近 \(records.count) 条记录", locale: locale))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                if let summary = todaySummary {
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             Spacer()
@@ -83,6 +92,29 @@ struct HistoryView: View {
 
     private func reload() {
         records = historyManager.getRecords()
+    }
+
+    /// 「今日 N 次 · 需确认 X · 完成 Y · 终端 Z」统计行；今日 0 条时返回 nil 不显示。
+    private var todaySummary: String? {
+        var confirm = 0, done = 0, terminal = 0
+        for record in records where Calendar.current.isDateInToday(record.timestamp) {
+            switch record.category {
+            case MessageProvider.Category.needsConfirm.rawValue,
+                 MessageProvider.Category.codexNeedsConfirm.rawValue:
+                confirm += 1
+            case MessageProvider.Category.done.rawValue,
+                 MessageProvider.Category.codexDone.rawValue:
+                done += 1
+            default:
+                terminal += 1
+            }
+        }
+        let total = confirm + done + terminal
+        guard total > 0 else { return nil }
+        return historyLang(
+            "Today: \(total) · \(confirm) confirm · \(done) done · \(terminal) terminal",
+            zh: "今日 \(total) 次 · 需确认 \(confirm) · 完成 \(done) · 终端 \(terminal)",
+            locale: locale)
     }
 }
 

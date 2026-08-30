@@ -18,6 +18,9 @@ class PreferencesManager: ObservableObject {
     @AppStorage("claudeWindowAttributionEnabled") var claudeWindowAttributionEnabled: Bool = false
     @AppStorage("codexAppEnabled")      var codexAppEnabled: Bool = false
     @AppStorage("codexPermissionRequestEnabled") var codexPermissionRequestEnabled: Bool = true
+    @AppStorage("autoDismissEnabled")   var autoDismissEnabled: Bool = true
+    @AppStorage("autoDismissSeconds")   var autoDismissSeconds: Int = Constants.autoDismissSecondsDefault
+    @AppStorage("snoozeMinutes")        var snoozeMinutes: Int = Constants.snoozeMinutesDefault
 
     var isInDNDPeriod: Bool {
         guard dndEnabled else { return false }
@@ -46,5 +49,13 @@ class PreferencesManager: ObservableObject {
 
     var resolvedCooldown: TimeInterval {
         TimeInterval(max(1, cooldownSeconds))
+    }
+
+    var resolvedAutoDismiss: TimeInterval {
+        TimeInterval(max(10, autoDismissSeconds))
+    }
+
+    var resolvedSnooze: TimeInterval {
+        TimeInterval(max(60, snoozeMinutes * 60))
     }
 }
