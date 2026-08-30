@@ -20,12 +20,17 @@ enum ClaudeHookManager {
 
     private static func command(for event: String) -> String {
         let rel = Constants.claudeEventsRelativePath
+        // tty 三级兜底：ps (controlling tty) → tty 命令 (stdio) → lsof (fd 指向的设备)。
+        // Claude Code 启动的子进程通常无 controlling TTY，前两级返回 "??"/"not a tty"，
+        // lsof 兜底看 stdio 实际指向的设备，通常能拿到 /dev/ttysNNN。
+        // 三级全失败时 tty_name 保持 "??" 等无效值，下游 monitor 归一化为 nil。
         return """
         rel='\(rel)'; dir="$HOME/$rel"; mkdir -p "$dir"; \
         tty_name="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ')"; \
-        [ -z "$tty_name" ] && tty_name="$(tty 2>/dev/null | sed 's#^/dev/##')"; \
+        if [ -z "$tty_name" ] || [ "$tty_name" = "??" ]; then tty_name="$(tty 2>/dev/null | sed 's#^/dev/##')"; fi; \
+        if [ -z "$tty_name" ] || [ "$tty_name" = "not a tty" ]; then tty_name="$(lsof -p $$ -a -Fn -d 0,1,2 2>/dev/null | grep -m1 '^n/dev/tty' | sed 's#^n/dev/##')"; fi; \
         file="$(mktemp "$dir/\(event).XXXXXX")" || exit 0; \
-        printf '{"event":"%s","source":"claude","tty":"%s","timestamp":%s}\\n' '\(event)' "$tty_name" "$(date +%s)" > "$file" \
+        printf '{"event":"%s","source":"claude","tty":"%s","timestamp":%s}\n' '\(event)' "$tty_name" "$(date +%s)" > "$file" \
         \(Constants.claudeHookMarker)
         """
     }

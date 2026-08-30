@@ -13,6 +13,8 @@ enum TerminalWindowRegistry {
         let tty: String
         let title: String
         let bounds: CGRect
+        /// AppleScript `id of window`，经调研验证与 CGWindowID 为同一值，是可靠的归因桥梁。
+        let windowID: CGWindowID?
     }
 
     static func orderedWindows() -> [TerminalWindowInfo] {
@@ -158,6 +160,12 @@ enum TerminalWindowRegistry {
 
         let matchingRows = scriptWindows.filter { normalizeTTY($0.tty) == tty }
         for row in matchingRows {
+            // 优先用 windowID 精确匹配（调研发现 AppleScript id 与 CGWindowID 同值，可靠桥梁）。
+            if let scriptID = row.windowID,
+               let byID = windows.first(where: { $0.windowID == scriptID }) {
+                return byID
+            }
+            // 降级到 title/bounds 匹配（多窗口同 title 时可能错配，但比没有强）。
             let matchingWindows = windows.filter {
                 windowsMatch($0, scriptWindow: row)
             }
@@ -180,9 +188,10 @@ enum TerminalWindowRegistry {
                     if visible of w is true and miniaturized of w is false then
                         set windowTitle to name of w
                         set windowBounds to bounds of w
+                        set windowID to id of w
                         repeat with t in tabs of w
                             set tabTTY to tty of t
-                            set output to output & tabTTY & fieldSep & windowTitle & fieldSep & (item 1 of windowBounds as text) & fieldSep & (item 2 of windowBounds as text) & fieldSep & (item 3 of windowBounds as text) & fieldSep & (item 4 of windowBounds as text) & rowSep
+                            set output to output & tabTTY & fieldSep & windowTitle & fieldSep & (item 1 of windowBounds as text) & fieldSep & (item 2 of windowBounds as text) & fieldSep & (item 3 of windowBounds as text) & fieldSep & (item 4 of windowBounds as text) & fieldSep & (windowID as text) & rowSep
                         end repeat
                     end if
                 end try
@@ -199,11 +208,12 @@ enum TerminalWindowRegistry {
             .split(separator: "\u{1e}")
             .compactMap { row in
                 let parts = row.split(separator: "\u{1f}")
-                guard parts.count == 6,
+                guard parts.count == 7,
                       let left = Double(parts[2]),
                       let top = Double(parts[3]),
                       let right = Double(parts[4]),
-                      let bottom = Double(parts[5]) else { return nil }
+                      let bottom = Double(parts[5]),
+                      let windowID = UInt32(parts[6]) else { return nil }
                 return ScriptWindow(
                     tty: String(parts[0]),
                     title: String(parts[1]),
@@ -212,7 +222,8 @@ enum TerminalWindowRegistry {
                         y: top,
                         width: right - left,
                         height: bottom - top
-                    )
+                    ),
+                    windowID: CGWindowID(windowID)
                 )
             }
     }

@@ -118,6 +118,10 @@
 
 默认 badge 检测在 Terminal.app 前台时会抑制，不弹。开启 Claude Code 状态检测后，Terminal 在后台时可直接按 Claude hook 提醒；Terminal 在前台时仍默认抑制。只有额外开启「前台多窗口归因」后，App 才会尝试根据 hook marker 里的 TTY 定位来源窗口；只有来源窗口不是最上层 Terminal 窗口时才弹。若无法可靠定位来源窗口，则继续抑制。
 
+### Q: 历史记录里有些记录点「跳转到窗口」只激活了 Terminal 本体，为什么？
+
+Claude Code 是由 GUI 进程启动的，hook 子进程通常**没有 controlling TTY**,hook 脚本里通过 `ps -o tty=` / `tty` / `lsof` 三级兜底也常拿不到真实 tty。拿不到 TTY 时,marker 里没有 tty 信息，App 就把历史跳窗降级为「激活 Terminal 本体」。这是 Claude Code 自身进程模型的限制，无法从 hook 这端根治；如果你需要可靠的跳窗归因，建议在 Terminal 里手动唤起 Claude Code（此时 hook 有 controlling TTY，归因更可靠）。
+
 ### Q: 为什么开启 Claude 前台多窗口归因后 macOS 要权限？
 
 基础 badge 检测和 Claude 后台 hook 提醒不需要辅助功能权限。Claude 前台多窗口归因需要读取和抬起 Terminal 窗口，因此会请求辅助功能权限；使用 Terminal 自动化信息辅助匹配窗口时，macOS 也可能弹出控制 Terminal 的权限提示。

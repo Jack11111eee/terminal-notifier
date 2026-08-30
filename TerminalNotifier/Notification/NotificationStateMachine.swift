@@ -400,6 +400,24 @@ class NotificationStateMachine {
             badgeFirstDetectedAt = nil
             pendingCount = 0
 
+        // 用户已经回到 Terminal（badge 清空），任何活跃状态都应回到 .idle。
+        // 否则菜单栏红点会永远卡在 .detected / .pending 不消。
+        case (.detected, .badgeCleared), (.pending, .badgeCleared):
+            longWaitTimer?.invalidate()
+            autoDismissTimer?.invalidate()
+            snoozeTimer?.invalidate()
+            snoozeTimer = nil
+            pendingInfo = nil
+            pendingCount = 0
+            badgeFirstDetectedAt = nil
+            activeCategory = nil
+            activeSource = .terminal
+            activeTargetWindow = nil
+            activeTTY = nil
+            activeMessage = nil
+            currentState = .idle
+            delegate?.stateMachine(self, didTransitionTo: .idle)
+
         default:
             break
         }
