@@ -86,6 +86,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.contentMonitor.stopMonitoring()
                 self?.claudeMonitor.stopMonitoring()
                 self?.codexMonitor.stopMonitoring()
+                // 暂停时复位状态机并收起弹窗；否则仓鼠式转态机的 cooldown/snooze/
+                // autoDismiss 定时器会在暂停期间继续走，恢复后立刻补弹过期提醒。
+                self?.stateMachine.reset()
+                self?.overlayController.forceClose()
             } else {
                 self?.contentMonitor.startMonitoring()
                 if self?.preferences.claudeCodeEnabled == true { self?.claudeMonitor.startMonitoring() }
@@ -205,7 +209,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         source: NotificationSource,
         targetWindow: TerminalWindowInfo?
     ) {
-        let focusActive = isSystemFocusActive()
+        let focusActive = cachedSystemFocusActive()
         tnLog("showOverlay: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod) focus=\(focusActive)")
         guard preferences.enabled, !preferences.isInDNDPeriod, !focusActive else {
             tnLog("showOverlay BLOCKED: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod) focus=\(focusActive)")
@@ -239,10 +243,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         selfCheckController?.show()
     }
 
+    /// Focus 状态缓存：5 秒 TTL + 后台刷新，避免主线程跑 plutil 子进程阻塞提醒（修 Bug 1）。
+    /// 首次调用返回 false（宁可不静默），后台队列异步填充，后续调用读缓存。
+    private var focusCachedValue: Bool = false
+    private var focusCachedAt: Date = .distantPast
+    private let focusCacheTTL: TimeInterval = 5
+    private var focusRefreshInFlight = false
+
+    private func cachedSystemFocusActive() -> Bool {
+        let now = Date()
+        if now.timeIntervalSince(focusCachedAt) > focusCacheTTL {
+            focusCachedAt = now
+            refreshFocusCacheIfNeeded()
+        }
+        return focusCachedValue
+    }
+
+    private func refreshFocusCacheIfNeeded() {
+        guard !focusRefreshInFlight else { return }
+        focusRefreshInFlight = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = self?.computeSystemFocusActive() ?? false
+            DispatchQueue.main.async { [weak self] in
+                self?.focusCachedValue = result
+                self?.focusRefreshInFlight = false
+            }
+        }
+    }
+
     /// 系统专注模式（Focus / DND）是否激活。
     /// 优先读 ~/Library/DoNotDisturb/DB/Assertions.json，失败回退 com.apple.ncprefs 的 dnd_prefs。
     /// 所有读法都失败时返回 false：宁可让提醒正常弹，也不能因检测失败静默吞掉提醒。
-    private func isSystemFocusActive() -> Bool {
+    /// 此方法可能跑 plutil 子进程，仅在后台队列调用。
+    private func computeSystemFocusActive() -> Bool {
         let assertionsPath = NSHomeDirectory() + "/Library/DoNotDisturb/DB/Assertions.json"
         if let data = FileManager.default.contents(atPath: assertionsPath),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -380,10 +413,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: TerminalContentMonitorDelegate {
+    func terminalContentDidClear(_ monitor: TerminalContentMonitor) {
+        tnLog("terminalContentDidClear — forwarding badgeCleared to stateMachine")
+        stateMachine.handleEvent(.badgeCleared)
+    }
     func terminalContentDidChange(_ monitor: TerminalContentMonitor) {
         tnLog("terminalContentDidChange — forwarding to stateMachine")
-        guard preferences.enabled, !preferences.isInDNDPeriod else {
-            tnLog("terminalContentDidChange BLOCKED by prefs")
+        // DND 不再拦在这里：事件进 stateMachine、历史写入照常，只在 showOverlay 拦视觉/听觉。
+        // 这样免打扰时菜单栏红点可见、历史可回补，但猫不掉、声音不响。
+        guard preferences.enabled else {
+            tnLog("terminalContentDidChange BLOCKED: disabled")
             return
         }
         stateMachine.handleEvent(.badgeDetected)
@@ -393,8 +432,8 @@ extension AppDelegate: TerminalContentMonitorDelegate {
 extension AppDelegate: ClaudeCodeMonitorDelegate {
     func claudeCodeMonitor(_ monitor: ClaudeCodeMonitor, didEmit event: AgentNotificationEvent) {
         tnLog("claudeCodeMonitor didEmit \(event.category.rawValue) tty=\(event.tty ?? "nil") window=\(event.targetWindow?.windowID ?? 0)")
-        guard preferences.enabled, !preferences.isInDNDPeriod else {
-            tnLog("claudeCodeMonitor BLOCKED by prefs")
+        guard preferences.enabled else {
+            tnLog("claudeCodeMonitor BLOCKED: disabled")
             return
         }
         stateMachine.handleEvent(.agentTrigger(event))
@@ -404,8 +443,8 @@ extension AppDelegate: ClaudeCodeMonitorDelegate {
 extension AppDelegate: CodexAppMonitorDelegate {
     func codexAppMonitor(_ monitor: CodexAppMonitor, didEmit category: MessageProvider.Category) {
         tnLog("codexAppMonitor didEmit \(category.rawValue)")
-        guard preferences.enabled, !preferences.isInDNDPeriod else {
-            tnLog("codexAppMonitor BLOCKED by prefs")
+        guard preferences.enabled else {
+            tnLog("codexAppMonitor BLOCKED: disabled")
             return
         }
         stateMachine.handleEvent(.agentTrigger(AgentNotificationEvent(
@@ -449,6 +488,8 @@ extension AppDelegate: NotificationStateMachineDelegate {
             category: category.rawValue,
             tty: sm.activeTTY,
             windowTitle: targetWindow?.title))
+        // 历史窗口若正开着，立即刷新列表，而不是等重开。
+        historyController.reloadIfVisible()
         showOverlay(message: message, category: category, source: source, targetWindow: targetWindow)
     }
     func stateMachine(

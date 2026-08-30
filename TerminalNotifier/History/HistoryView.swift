@@ -1,14 +1,30 @@
 import SwiftUI
 
+/// 历史列表的共享刷新信号：AppDelegate 新增记录后 bump，已打开的 HistoryView 通过
+/// @ObservedObject 响应并重新加载。注入方式避免「rootView 值副本」不生效的问题。
+final class HistoryRefreshModel: ObservableObject {
+    @Published var reloadToken: Int = 0
+}
+
 struct HistoryView: View {
     let historyManager: NotificationHistoryManager
     /// 点击记录时回调（跳转对应窗口），由 HistoryWindowController 注入。
     var onRecordTapped: ((NotificationRecord) -> Void)?
+    /// 共享刷新信号；token 变化即触发 reload。
+    @ObservedObject var refreshModel: HistoryRefreshModel
 
     @AppStorage("language") private var language: String = "system"
     @State private var records: [NotificationRecord] = []
 
     private var locale: String { PreferencesManager.resolveLocale(language) }
+
+    init(historyManager: NotificationHistoryManager,
+         onRecordTapped: ((NotificationRecord) -> Void)? = nil,
+         refreshModel: HistoryRefreshModel) {
+        self.historyManager = historyManager
+        self.onRecordTapped = onRecordTapped
+        self.refreshModel = refreshModel
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,6 +51,8 @@ struct HistoryView: View {
         .frame(width: 620, height: 460)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear(perform: reload)
+        // 共享 token 变化（新增记录/清空）即刷新。
+        .onChange(of: refreshModel.reloadToken) { _ in reload() }
     }
 
     private var header: some View {

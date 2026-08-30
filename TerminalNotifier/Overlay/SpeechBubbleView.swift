@@ -9,14 +9,37 @@ class SpeechBubbleView: NSView {
         didSet { snoozeButton.title = snoozeTitle }
     }
 
-    private let snoozeButton: NSButton = {
-        let button = NSButton(title: "", target: nil, action: nil)
+    /// 「稍后」按钮暴露给 OverlayContentView 做 hit-test 优先命中判断。
+    /// 使用 CursorButton 子类，hover 时切换为手型光标（修复"点了稍后没反馈"）。
+    let snoozeButton: CursorButton = {
+        let button = CursorButton(title: "", target: nil, action: nil)
         button.isBordered = false
         button.bezelStyle = .inline
         button.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         button.contentTintColor = NSColor.secondaryLabelColor
         return button
     }()
+
+    /// 简单 NSButton 子类：hover 时切换成手型光标。
+    final class CursorButton: NSButton {
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            for area in trackingAreas { removeTrackingArea(area) }
+            addTrackingArea(NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeAlways],
+                owner: self,
+                userInfo: nil))
+        }
+        override func mouseEntered(with event: NSEvent) {
+            super.mouseEntered(with: event)
+            NSCursor.pointingHand.push()
+        }
+        override func mouseExited(with event: NSEvent) {
+            NSCursor.pop()
+            super.mouseExited(with: event)
+        }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -40,19 +63,22 @@ class SpeechBubbleView: NSView {
             with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
-        // 底部额外为「稍后」按钮预留空间
-        let snoozeReserve: CGFloat = 24
-        let height = max(64, ceil(measured.height) + contentInsets.top + contentInsets.bottom + snoozeReserve)
+        // 高度 = 文字 + 上下 padding + 底部按钮区，三者独立不累加进文字区
+        let height = max(64, ceil(measured.height) + contentInsets.top + contentInsets.bottom + Self.snoozeAreaHeight)
         return NSSize(width: width, height: height)
     }
+
+    /// 气泡底部为「稍后」按钮预留的固定高度（文字区与按钮区的分界）。
+    private static let snoozeAreaHeight: CGFloat = 28
 
     override func layout() {
         super.layout()
         let drawingBounds = bounds.insetBy(dx: 8, dy: 6)
         let btnSize = NSSize(width: 44, height: 18)
+        // 按钮放在底部预留区（snoozeAreaHeight=28）的垂直中心
         snoozeButton.frame = NSRect(
             x: drawingBounds.maxX - btnSize.width - 12,
-            y: drawingBounds.minY + 8,
+            y: drawingBounds.minY + (Self.snoozeAreaHeight - btnSize.height) / 2,
             width: btnSize.width,
             height: btnSize.height
         )
@@ -93,13 +119,18 @@ class SpeechBubbleView: NSView {
             with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
             options: drawOptions
         )
-        // 底部要留白给按钮，文本可用高度扣掉 snooze 预留
-        let snoozeReserve: CGFloat = 24
-        let maxTextHeight = bubbleRect.height - vInset * 2 - snoozeReserve
-        let textHeight = min(ceil(measured.height), maxTextHeight)
+        // 文字占用气泡上部区域（总高 - 底部按钮区），在该子区域内垂直居中。
+        // 这样短文字不会被推进按钮区，长文字也不溢出。
+        let textRegion = NSRect(
+            x: bubbleRect.minX,
+            y: bubbleRect.minY + Self.snoozeAreaHeight,
+            width: bubbleRect.width,
+            height: bubbleRect.height - Self.snoozeAreaHeight
+        )
+        let textHeight = min(ceil(measured.height), textRegion.height - vInset * 2)
         let textRect = NSRect(
             x: bubbleRect.minX + hInset,
-            y: bubbleRect.minY + snoozeReserve + (maxTextHeight - textHeight) / 2 + vInset / 2,
+            y: textRegion.midY - textHeight / 2,
             width: availableWidth,
             height: textHeight
         )

@@ -108,6 +108,14 @@ private struct SelfCheckView: View {
         ]
     }
 
+    /// 修复动作执行后延迟刷新：启用开关经 UserDefaults 通知异步生效，0.5s 后重跑确保状态准确。
+    private func runRepair(_ repair: @escaping () -> Void) {
+        repair()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            runChecks()
+        }
+    }
+
     // MARK: 各项检查
 
     private func checkAccessibility() -> CheckItem {
@@ -120,13 +128,26 @@ private struct SelfCheckView: View {
                 ? lang("Granted — window attribution works.", zh: "已授权，窗口归因可用。")
                 : lang("Not granted — window jump will silently fail.", zh: "未授权，点击跳转窗口会静默失效。"),
             repairTitle: trusted ? nil : lang("Re-authorize", zh: "重新授权"),
-            repair: trusted ? nil : {
-                _ = TerminalWindowRegistry.requestAccessibilityTrustIfNeeded()
+            repair: trusted ? nil : { [self] in
+                runRepair { _ = TerminalWindowRegistry.requestAccessibilityTrustIfNeeded() }
             }
         )
     }
 
     private func checkClaudeHook() -> CheckItem {
+        // 未启用时给「立即启用」而非「重新安装」——白装了 monitor 也不会启动。
+        guard PreferencesManager.shared.claudeCodeEnabled else {
+            return CheckItem(
+                icon: "terminal",
+                title: "Claude Code hook",
+                status: .disabled,
+                detail: lang("Claude detection is off.", zh: "Claude Code 检测未启用。"),
+                repairTitle: lang("Enable Now", zh: "立即启用"),
+                repair: { [self] in
+                    runRepair { PreferencesManager.shared.claudeCodeEnabled = true }
+                }
+            )
+        }
         let path = NSHomeDirectory() + "/.claude/settings.json"
         let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
         let installed = content.contains(Constants.claudeHookMarker)
@@ -138,8 +159,8 @@ private struct SelfCheckView: View {
                 ? lang("Installed in ~/.claude/settings.json.", zh: "已安装到 ~/.claude/settings.json。")
                 : lang("Missing — Claude reminders won't fire.", zh: "缺失，Claude 提醒不会触发。"),
             repairTitle: installed ? nil : lang("Reinstall", zh: "重新安装"),
-            repair: installed ? nil : {
-                _ = ClaudeHookManager.install()
+            repair: installed ? nil : { [self] in
+                runRepair { _ = ClaudeHookManager.install() }
             }
         )
     }
@@ -151,13 +172,18 @@ private struct SelfCheckView: View {
                 title: "Codex hook",
                 status: .disabled,
                 detail: lang("Codex detection is off.", zh: "Codex 检测未启用。"),
-                repairTitle: nil,
-                repair: nil
+                repairTitle: lang("Enable Now", zh: "立即启用"),
+                repair: { [self] in
+                    runRepair { PreferencesManager.shared.codexAppEnabled = true }
+                }
             )
         }
         let path = NSHomeDirectory() + "/.codex/hooks.json"
         let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        let installed = content.contains(Constants.codexHookMarker)
+        // install() 写入的是按事件拆分的新 marker；旧版总 marker 仅用于卸载时识别。
+        // 此处需与新 marker 对齐，否则已安装会被误判为缺失。
+        let installed = content.contains(Constants.codexStopHookMarker)
+            || content.contains(Constants.codexPermissionHookMarker)
         return CheckItem(
             icon: "macwindow",
             title: "Codex hook",
@@ -166,8 +192,8 @@ private struct SelfCheckView: View {
                 ? lang("Installed in ~/.codex/hooks.json.", zh: "已安装到 ~/.codex/hooks.json。")
                 : lang("Missing — Codex reminders won't fire.", zh: "缺失，Codex 提醒不会触发。"),
             repairTitle: installed ? nil : lang("Reinstall", zh: "重新安装"),
-            repair: installed ? nil : {
-                _ = CodexHookManager.install()
+            repair: installed ? nil : { [self] in
+                runRepair { _ = CodexHookManager.install() }
             }
         )
     }
