@@ -73,8 +73,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         overlayController.onJumpBackComplete = { [weak self] in
             guard let self else { return }
-            self.stateMachine.handleEvent(.jumpBackCompleted)
             self.overlayController.forceClose()
+            self.stateMachine.handleEvent(.jumpBackCompleted)
         }
 
         statusBarController.onSettingsClicked = { [weak self] in
@@ -213,6 +213,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         tnLog("showOverlay: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod) focus=\(focusActive)")
         guard preferences.enabled, !preferences.isInDNDPeriod, !focusActive else {
             tnLog("showOverlay BLOCKED: enabled=\(preferences.enabled) dnd=\(preferences.isInDNDPeriod) focus=\(focusActive)")
+            stateMachine.handleEvent(.overlaySuppressed)
             return
         }
         currentOverlayTargetWindow = targetWindow

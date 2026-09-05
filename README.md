@@ -43,6 +43,10 @@ open build/TerminalNotifier.app
 INSTALL=1 ./build.sh
 ```
 
+### 回归测试
+
+安装完整 Xcode 并选为当前开发工具后，运行 `bash test.sh`。测试使用临时配置文件和进程内偏好，不修改实际 Claude/Codex 配置，也不会启动应用或请求系统权限。
+
 ## 功能
 
 - **Badge 基础检测零权限**：默认只读 Terminal Dock badge，无需辅助功能权限或屏幕录制权限
@@ -107,6 +111,9 @@ INSTALL=1 ./build.sh
 ## 更新日志
 
 ### Unreleased
+- 修复混合 hook 分组的清理逻辑，安装、更新和卸载时保留同组的用户 hook 与分组设置。
+- 修复免打扰、专注模式或关闭提醒拦截显示后状态机卡住的问题；被拦截的提醒保留为待处理记录。
+- Claude/Codex hook 提醒按接收顺序排队，当前提醒展示及进出动画期间的新事件不再丢失或覆盖当前提醒；收起后按冷却时间依次处理。
 - Claude Code 状态检测增加 Terminal 前台多窗口归因：事件来自非最上层 Terminal 窗口时也会提醒，关闭后可跳到来源窗口。
 - Claude 前台多窗口归因改为独立高级开关，Claude 后台 hook 提醒不再自动请求辅助功能权限。
 - Claude hook marker 改为 JSON，包含事件类型、来源、TTY 和时间戳；旧版空 marker 仍兼容。

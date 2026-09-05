@@ -13,7 +13,7 @@ import Foundation
 /// 已通过备份缓解，且仅在用户显式开关时才改动。
 enum ClaudeHookManager {
 
-    private static var settingsURL: URL {
+    private static var defaultSettingsURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".claude/settings.json")
     }
@@ -38,8 +38,8 @@ enum ClaudeHookManager {
     // MARK: - 公开接口
 
     @discardableResult
-    static func install() -> Bool {
-        guard var settings = loadSettings() else { return false }
+    static func install(at settingsURL: URL = defaultSettingsURL) -> Bool {
+        guard var settings = loadSettings(at: settingsURL) else { return false }
         guard var hooks = loadHooks(from: settings) else { return false }
         guard let notificationGroups = loadHookGroups(from: hooks, event: "Notification"),
               let stopGroups = loadHookGroups(from: hooks, event: "Stop") else {
@@ -56,27 +56,29 @@ enum ClaudeHookManager {
             command: command(for: Constants.claudeEventDone))
 
         settings["hooks"] = hooks
-        return save(settings)
+        return save(settings, at: settingsURL)
     }
 
     @discardableResult
-    static func uninstall() -> Bool {
+    static func uninstall(at settingsURL: URL = defaultSettingsURL) -> Bool {
         guard FileManager.default.fileExists(atPath: settingsURL.path) else { return true }
-        guard var settings = loadSettings() else { return false }
+        guard var settings = loadSettings(at: settingsURL) else { return false }
         guard settings["hooks"] != nil else { return true }
         guard var hooks = loadHooks(from: settings) else { return false }
 
         for event in ["Notification", "Stop"] {
             guard let groups = loadHookGroups(from: hooks, event: event) else { return false }
             if groups.isEmpty, hooks[event] == nil { continue }
-            let kept = groups.filter { !groupContainsMarker($0) }
+            let kept = HookGroups.removingCommands(from: groups) {
+                $0.contains(Constants.claudeHookMarker)
+            }
             if kept.isEmpty { hooks.removeValue(forKey: event) }
             else { hooks[event] = kept }
         }
 
         if hooks.isEmpty { settings.removeValue(forKey: "hooks") }
         else { settings["hooks"] = hooks }
-        return save(settings)
+        return save(settings, at: settingsURL)
     }
 
     // MARK: - 结构操作
@@ -136,7 +138,7 @@ enum ClaudeHookManager {
 
     // MARK: - 读写
 
-    private static func loadSettings() -> [String: Any]? {
+    private static func loadSettings(at settingsURL: URL) -> [String: Any]? {
         guard FileManager.default.fileExists(atPath: settingsURL.path) else { return [:] }
 
         do {
@@ -152,8 +154,8 @@ enum ClaudeHookManager {
         }
     }
 
-    private static func save(_ settings: [String: Any]) -> Bool {
-        guard backupIfPresent() else { return false }
+    private static func save(_ settings: [String: Any], at settingsURL: URL) -> Bool {
+        guard backupIfPresent(at: settingsURL) else { return false }
         do {
             try FileManager.default.createDirectory(
                 at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -167,11 +169,11 @@ enum ClaudeHookManager {
         }
     }
 
-    private static func backupIfPresent() -> Bool {
+    private static func backupIfPresent(at settingsURL: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: settingsURL.path) else { return true }
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyyMMdd-HHmmss"
-        let backup = availableBackupURL(timestamp: fmt.string(from: Date()))
+        let backup = availableBackupURL(for: settingsURL, timestamp: fmt.string(from: Date()))
         do {
             try FileManager.default.copyItem(at: settingsURL, to: backup)
             return true
@@ -181,7 +183,7 @@ enum ClaudeHookManager {
         }
     }
 
-    private static func availableBackupURL(timestamp: String) -> URL {
+    private static func availableBackupURL(for settingsURL: URL, timestamp: String) -> URL {
         let directory = settingsURL.deletingLastPathComponent()
         let baseName = "settings.json.tn-backup-\(timestamp)"
         var candidate = directory.appendingPathComponent(baseName)

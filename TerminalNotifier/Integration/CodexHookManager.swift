@@ -6,7 +6,7 @@ import Foundation
 /// 只增删 Terminal Notifier 管理的 entry，保留用户其它 hook。
 enum CodexHookManager {
 
-    private static var hooksURL: URL {
+    private static var defaultHooksURL: URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".codex/hooks.json")
     }
@@ -24,8 +24,8 @@ enum CodexHookManager {
     }
 
     @discardableResult
-    static func install(includePermissionRequest: Bool = true) -> Bool {
-        guard var settings = loadSettings() else { return false }
+    static func install(includePermissionRequest: Bool = true, at hooksURL: URL = defaultHooksURL) -> Bool {
+        guard var settings = loadSettings(at: hooksURL) else { return false }
         guard var hooks = loadHooks(from: settings) else { return false }
         guard let permissionGroups = loadHookGroups(from: hooks, event: "PermissionRequest"),
               let stopGroups = loadHookGroups(from: hooks, event: "Stop") else {
@@ -45,27 +45,27 @@ enum CodexHookManager {
             command: doneCommand,
             statusMessage: "Terminal Notifier: Codex completion reminder")
         settings["hooks"] = hooks
-        return save(settings)
+        return save(settings, at: hooksURL)
     }
 
     @discardableResult
-    static func uninstall() -> Bool {
+    static func uninstall(at hooksURL: URL = defaultHooksURL) -> Bool {
         guard FileManager.default.fileExists(atPath: hooksURL.path) else { return true }
-        guard var settings = loadSettings() else { return false }
+        guard var settings = loadSettings(at: hooksURL) else { return false }
         guard settings["hooks"] != nil else { return true }
         guard var hooks = loadHooks(from: settings) else { return false }
 
         for event in ["PermissionRequest", "Stop"] {
             guard let groups = loadHookGroups(from: hooks, event: event) else { return false }
             if groups.isEmpty, hooks[event] == nil { continue }
-            let kept = groups.filter { !groupContainsMarker($0) }
+            let kept = removeManagedEntries(from: groups)
             if kept.isEmpty { hooks.removeValue(forKey: event) }
             else { hooks[event] = kept }
         }
 
         if hooks.isEmpty { settings.removeValue(forKey: "hooks") }
         else { settings["hooks"] = hooks }
-        return save(settings)
+        return save(settings, at: hooksURL)
     }
 
     private static func ensureEntry(
@@ -85,7 +85,11 @@ enum CodexHookManager {
     }
 
     private static func removeManagedEntries(from groups: [[String: Any]]) -> [[String: Any]] {
-        groups.filter { !groupContainsMarker($0) }
+        HookGroups.removingCommands(from: groups) { command in
+            command.contains(Constants.codexHookMarker)
+                || command.contains(Constants.codexPermissionHookMarker)
+                || command.contains(Constants.codexStopHookMarker)
+        }
     }
 
     private static func setGroups(
@@ -97,17 +101,7 @@ enum CodexHookManager {
         else { hooks[event] = groups }
     }
 
-    private static func groupContainsMarker(_ group: [String: Any]) -> Bool {
-        guard let hooks = group["hooks"] as? [[String: Any]] else { return false }
-        return hooks.contains {
-            guard let command = $0["command"] as? String else { return false }
-            return command.contains(Constants.codexHookMarker)
-                || command.contains(Constants.codexPermissionHookMarker)
-                || command.contains(Constants.codexStopHookMarker)
-        }
-    }
-
-    private static func loadSettings() -> [String: Any]? {
+    private static func loadSettings(at hooksURL: URL) -> [String: Any]? {
         guard FileManager.default.fileExists(atPath: hooksURL.path) else { return [:] }
 
         do {
@@ -141,8 +135,8 @@ enum CodexHookManager {
         return groups
     }
 
-    private static func save(_ settings: [String: Any]) -> Bool {
-        guard backupIfPresent() else { return false }
+    private static func save(_ settings: [String: Any], at hooksURL: URL) -> Bool {
+        guard backupIfPresent(at: hooksURL) else { return false }
         do {
             try FileManager.default.createDirectory(
                 at: hooksURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -156,11 +150,11 @@ enum CodexHookManager {
         }
     }
 
-    private static func backupIfPresent() -> Bool {
+    private static func backupIfPresent(at hooksURL: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: hooksURL.path) else { return true }
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyyMMdd-HHmmss"
-        let backup = availableBackupURL(timestamp: fmt.string(from: Date()))
+        let backup = availableBackupURL(for: hooksURL, timestamp: fmt.string(from: Date()))
         do {
             try FileManager.default.copyItem(at: hooksURL, to: backup)
             return true
@@ -170,7 +164,7 @@ enum CodexHookManager {
         }
     }
 
-    private static func availableBackupURL(timestamp: String) -> URL {
+    private static func availableBackupURL(for hooksURL: URL, timestamp: String) -> URL {
         let directory = hooksURL.deletingLastPathComponent()
         let baseName = "hooks.json.tn-backup-\(timestamp)"
         var candidate = directory.appendingPathComponent(baseName)
