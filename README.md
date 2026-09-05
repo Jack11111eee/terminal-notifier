@@ -47,6 +47,8 @@ INSTALL=1 ./build.sh
 
 安装完整 Xcode 并选为当前开发工具后，运行 `bash test.sh`。测试使用临时配置文件和进程内偏好，不修改实际 Claude/Codex 配置，也不会启动应用或请求系统权限。
 
+GitHub Actions 会在面向 `main` 的 PR 和 `main` 更新时，构建应用、校验 ad-hoc 签名并运行这些回归测试。CI 不安装应用、不使用正式签名证书，也不自动发布安装包。
+
 ## 功能
 
 - **Badge 基础检测零权限**：默认只读 Terminal Dock badge，无需辅助功能权限或屏幕录制权限

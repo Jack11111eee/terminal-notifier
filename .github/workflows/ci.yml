@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and regression tests
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Build app
+        env:
+          SIGN_IDENTITY: "-"
+          INSTALL: "0"
+          CLANG_MODULE_CACHE_PATH: ${{ runner.temp }}/clang-module-cache
+        run: bash build.sh
+
+      - name: Verify app bundle
+        run: codesign --verify --deep --strict build/TerminalNotifier.app
+
+      - name: Run regression tests
+        run: bash test.sh
