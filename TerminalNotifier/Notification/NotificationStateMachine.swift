@@ -22,6 +22,7 @@ enum NotificationEvent {
     case autoDismissElapsed
     case snoozeElapsed
     case clearPending
+    case overlaySuppressed
 }
 
 protocol NotificationStateMachineDelegate: AnyObject {
@@ -59,8 +60,9 @@ class NotificationStateMachine {
     private(set) var activeTTY: String?
     /// 当前展示/挂起中的提醒原文，供 pendingInfo 记录并在倒计时后原样重弹。
     private var activeMessage: String?
-    /// 冷却期间到达的 hook 事件，冷却结束后补弹。
-    private var pendingAgent: AgentNotificationEvent?
+    /// Accepted hook events wait in arrival order until the current overlay is closed.
+    private var pendingAgents: [AgentNotificationEvent] = []
+    private var isOverlayDismissing = false
     private var autoDismissTimer: Timer?
     private var snoozeTimer: Timer?
     /// 挂起事件（自动降级或「稍后」）的完整上下文，供菜单栏重看与跳窗激活。
@@ -76,6 +78,19 @@ class NotificationStateMachine {
     private var locale: String { PreferencesManager.shared.resolvedLocale }
 
     func handleEvent(_ event: NotificationEvent) {
+        if case .cooldownExpired = event {
+            cooldownTimer?.invalidate()
+            cooldownTimer = nil
+            isInCooldown = false
+        }
+        if case .agentTrigger(let agent) = event {
+            pendingAgents.append(agent)
+            if (currentState == .idle || currentState == .pending),
+               !isInCooldown, !isOverlayDismissing {
+                showNextAgent()
+            }
+            return
+        }
         let oldState = currentState
         switch (currentState, event) {
         case (.idle, .badgeDetected):
@@ -100,70 +115,10 @@ class NotificationStateMachine {
                 source: .terminal,
                 targetWindow: nil)
 
-        case (.idle, .agentTrigger(let event)):
-            guard !isInCooldown else {
-                pendingAgent = event
-                return
-            }
-            let cat = event.category
-            activeCategory = cat
-            activeSource = event.source
-            activeTargetWindow = event.targetWindow
-            activeTTY = event.tty
-            pendingCount = 1
-            let msg = messageProvider.randomMessage(category: cat, locale: locale)
-            activeMessage = msg
-            currentState = .detected(count: 1)
-            badgeFirstDetectedAt = Date()
-            delegate?.stateMachine(self, didTransitionTo: currentState)
-            delegate?.stateMachine(
-                self,
-                shouldShowOverlayWithMessage: msg,
-                category: cat,
-                source: event.source,
-                targetWindow: event.targetWindow)
-
-        case (.showing, .agentTrigger(let event)):
-            let cat = event.category
-            activeCategory = cat
-            activeSource = event.source
-            activeTargetWindow = event.targetWindow
-            activeTTY = event.tty
-            let msg = messageProvider.randomMessage(category: cat, locale: locale)
-            activeMessage = msg
-            // M1 修复：Showing 中来了新事件，语义上是一次新的展示周期，重置自动降级倒计时。
-            startAutoDismissTimerIfNeeded()
-            delegate?.stateMachine(
-                self,
-                shouldUpdateMessage: msg,
-                category: cat,
-                source: event.source,
-                targetWindow: event.targetWindow)
-
-        // M2 修复：cooldownExpired 不限制状态，任何状态下都可能到时。
-        // 关键是：只处理 pendingAgent 补弹的两种情况：状态是 .idle（无事发生，直接补弹）或
-        // .pending（挂起中，新到的事件应接管 overlay）。.showing 时 cooldown 到期只是
-        // 时序巧合，pendingAgent 保持排队，待当前展示走完正常 dismiss 流程再补。
         case (.idle, .cooldownExpired):
-            if let pending = pendingAgent {
-                pendingAgent = nil
-                let cat = pending.category
-                activeCategory = cat
-                activeSource = pending.source
-                activeTargetWindow = pending.targetWindow
-                activeTTY = pending.tty
-                pendingCount = 1
-                let msg = messageProvider.randomMessage(category: cat, locale: locale)
-                activeMessage = msg
-                currentState = .detected(count: 1)
-                badgeFirstDetectedAt = Date()
-                delegate?.stateMachine(self, didTransitionTo: currentState)
-                delegate?.stateMachine(
-                    self,
-                    shouldShowOverlayWithMessage: msg,
-                    category: cat,
-                    source: pending.source,
-                    targetWindow: pending.targetWindow)
+            guard !isOverlayDismissing else { return }
+            if !pendingAgents.isEmpty {
+                showNextAgent()
             } else if pendingCount > 0 {
                 let count = pendingCount
                 pendingCount = 0
@@ -183,6 +138,13 @@ class NotificationStateMachine {
                     source: .terminal,
                     targetWindow: nil)
             }
+
+        case (.detected, .overlaySuppressed):
+            // No window exists, so no animation completion will arrive.
+            pendingInfo = currentPendingInfo()
+            currentState = .pending
+            delegate?.stateMachine(self, didTransitionTo: currentState)
+            if !pendingAgents.isEmpty { startCooldown() }
 
         case (.detected, .badgeDetected):
             pendingCount += 1
@@ -230,6 +192,7 @@ class NotificationStateMachine {
             longWaitTimer?.invalidate()
             autoDismissTimer?.invalidate()
             currentState = .animatingOut
+            isOverlayDismissing = true
             delegate?.stateMachine(self, didTransitionTo: currentState)
             delegate?.stateMachineShouldDismissOverlay(self)
 
@@ -239,6 +202,7 @@ class NotificationStateMachine {
             let info = currentPendingInfo()
             pendingInfo = info
             currentState = .pending
+            isOverlayDismissing = true
             startSnoozeTimer()
             delegate?.stateMachine(self, didTransitionTo: currentState)
             delegate?.stateMachineShouldDismissOverlay(self)
@@ -249,10 +213,12 @@ class NotificationStateMachine {
             let info = currentPendingInfo()
             pendingInfo = info
             currentState = .pending
+            isOverlayDismissing = true
             delegate?.stateMachine(self, didTransitionTo: currentState)
             delegate?.stateMachineShouldDismissOverlay(self)
 
         case (.animatingOut, .jumpBackCompleted):
+            isOverlayDismissing = false
             pendingCount = 0
             badgeFirstDetectedAt = nil
             activeCategory = nil
@@ -264,31 +230,16 @@ class NotificationStateMachine {
             if pendingInfo != nil {
                 currentState = .pending
                 delegate?.stateMachine(self, didTransitionTo: currentState)
-            } else if let pending = pendingAgent {
-                // M2 修复：dismiss 完成时如发现排队新事件（cooldown 期间到的），立即补弹，不进 idle。
-                pendingAgent = nil
-                let cat = pending.category
-                activeCategory = cat
-                activeSource = pending.source
-                activeTargetWindow = pending.targetWindow
-                activeTTY = pending.tty
-                pendingCount = 1
-                let msg = messageProvider.randomMessage(category: cat, locale: locale)
-                activeMessage = msg
-                currentState = .detected(count: 1)
-                badgeFirstDetectedAt = Date()
-                delegate?.stateMachine(self, didTransitionTo: currentState)
-                delegate?.stateMachine(
-                    self,
-                    shouldShowOverlayWithMessage: msg,
-                    category: cat,
-                    source: pending.source,
-                    targetWindow: pending.targetWindow)
             } else {
                 currentState = .idle
-                startCooldown()
                 delegate?.stateMachine(self, didTransitionTo: currentState)
             }
+            startCooldown()
+
+        case (.pending, .jumpBackCompleted), (.idle, .jumpBackCompleted):
+            guard isOverlayDismissing else { return }
+            isOverlayDismissing = false
+            if !pendingAgents.isEmpty { startCooldown() }
 
         case (.pending, .snoozeElapsed):
             guard let info = pendingInfo else {
@@ -325,30 +276,7 @@ class NotificationStateMachine {
             activeMessage = nil
             currentState = .idle
             delegate?.stateMachine(self, didTransitionTo: currentState)
-
-        // C1 修复：pending（挂起）期间到达的新事件不能被吞。
-        // 策略：保留旧 pendingInfo 不动；新事件立即接管 overlay 展示，走正常 detected 流程。
-        case (.pending, .agentTrigger(let event)):
-            pendingInfo = nil  // 旧挂起事件让位；用户认为它已完成或不再需要
-            snoozeTimer?.invalidate()
-            snoozeTimer = nil
-            let cat = event.category
-            activeCategory = cat
-            activeSource = event.source
-            activeTargetWindow = event.targetWindow
-            activeTTY = event.tty
-            pendingCount = 1
-            let msg = messageProvider.randomMessage(category: cat, locale: locale)
-            activeMessage = msg
-            currentState = .detected(count: 1)
-            badgeFirstDetectedAt = Date()
-            delegate?.stateMachine(self, didTransitionTo: currentState)
-            delegate?.stateMachine(
-                self,
-                shouldShowOverlayWithMessage: msg,
-                category: cat,
-                source: event.source,
-                targetWindow: event.targetWindow)
+            if !pendingAgents.isEmpty, !isOverlayDismissing { startCooldown() }
 
         case (.pending, .badgeDetected):
             pendingInfo = nil
@@ -371,30 +299,9 @@ class NotificationStateMachine {
                 source: .terminal,
                 targetWindow: nil)
 
-        // M2 修复：cooldown 到期时若正处于 pending 挂起态，把 pendingAgent 立即补弹。
         case (.pending, .cooldownExpired):
-            guard let pending = pendingAgent else { return }
-            pendingAgent = nil
-            pendingInfo = nil
-            snoozeTimer?.invalidate()
-            snoozeTimer = nil
-            let cat = pending.category
-            activeCategory = cat
-            activeSource = pending.source
-            activeTargetWindow = pending.targetWindow
-            activeTTY = pending.tty
-            pendingCount = 1
-            let msg = messageProvider.randomMessage(category: cat, locale: locale)
-            activeMessage = msg
-            currentState = .detected(count: 1)
-            badgeFirstDetectedAt = Date()
-            delegate?.stateMachine(self, didTransitionTo: currentState)
-            delegate?.stateMachine(
-                self,
-                shouldShowOverlayWithMessage: msg,
-                category: cat,
-                source: pending.source,
-                targetWindow: pending.targetWindow)
+            guard !isOverlayDismissing else { return }
+            showNextAgent()
 
         case (.idle, .badgeCleared):
             badgeFirstDetectedAt = nil
@@ -403,6 +310,7 @@ class NotificationStateMachine {
         // 用户已经回到 Terminal（badge 清空），任何活跃状态都应回到 .idle。
         // 否则菜单栏红点会永远卡在 .detected / .pending 不消。
         case (.detected, .badgeCleared), (.pending, .badgeCleared):
+            guard activeCategory == nil else { return }
             longWaitTimer?.invalidate()
             autoDismissTimer?.invalidate()
             snoozeTimer?.invalidate()
@@ -417,6 +325,7 @@ class NotificationStateMachine {
             activeMessage = nil
             currentState = .idle
             delegate?.stateMachine(self, didTransitionTo: .idle)
+            if !pendingAgents.isEmpty { startCooldown() }
 
         default:
             break
@@ -428,6 +337,30 @@ class NotificationStateMachine {
             print("[SM] \(oldState) + \(event) → (no transition)")
         }
 #endif
+    }
+
+    private func showNextAgent() {
+        guard !pendingAgents.isEmpty else { return }
+        let event = pendingAgents.removeFirst()
+        pendingInfo = nil
+        snoozeTimer?.invalidate()
+        snoozeTimer = nil
+        activeCategory = event.category
+        activeSource = event.source
+        activeTargetWindow = event.targetWindow
+        activeTTY = event.tty
+        pendingCount = 1
+        let message = messageProvider.randomMessage(category: event.category, locale: locale)
+        activeMessage = message
+        badgeFirstDetectedAt = Date()
+        currentState = .detected(count: 1)
+        delegate?.stateMachine(self, didTransitionTo: currentState)
+        delegate?.stateMachine(
+            self,
+            shouldShowOverlayWithMessage: message,
+            category: event.category,
+            source: event.source,
+            targetWindow: event.targetWindow)
     }
 
     private func messageForShowing(count: Int, badgeAge: TimeInterval)
@@ -495,7 +428,6 @@ class NotificationStateMachine {
             withTimeInterval: cooldown,
             repeats: false
         ) { [weak self] _ in
-            self?.isInCooldown = false
             self?.handleEvent(.cooldownExpired)
         }
     }
@@ -515,9 +447,11 @@ class NotificationStateMachine {
         activeCategory = nil
         activeSource = .terminal
         activeTargetWindow = nil
+        activeTTY = nil
         activeMessage = nil
         pendingInfo = nil
-        pendingAgent = nil
+        pendingAgents.removeAll()
+        isOverlayDismissing = false
         currentState = .idle
     }
 }
