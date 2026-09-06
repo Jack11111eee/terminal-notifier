@@ -31,6 +31,8 @@ class StatusBarController {
         }
         button.image = Self.createColoredCatIcon(size: 22)
         button.imagePosition = .imageOnly
+        button.setAccessibilityLabel("Terminal Notifier")
+        button.toolTip = "Terminal Notifier"
         print("[TerminalNotifier] Icon set on status bar button")
     }
 
@@ -165,6 +167,15 @@ class StatusBarController {
     func updateIcon(state: MenuBarIconState) {
         DispatchQueue.main.async {
             guard let button = self.statusItem.button else { return }
+            let description: String
+            switch state {
+            case .normal: description = self.menuLang("Notifications active", zh: "提醒运行中")
+            case .notifying: description = self.menuLang("New reminder", zh: "有新提醒")
+            case .pending: description = self.menuLang("Pending reminder", zh: "有待处理提醒")
+            case .paused: description = self.menuLang("Notifications paused", zh: "提醒已暂停")
+            }
+            button.setAccessibilityLabel("Terminal Notifier: \(description)")
+            button.toolTip = "Terminal Notifier: \(description)"
             switch state {
             case .normal:
                 button.image = Self.createColoredCatIcon(size: Constants.menuBarIconSize)

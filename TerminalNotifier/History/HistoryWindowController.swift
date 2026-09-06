@@ -13,7 +13,6 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
         if let existing = window {
             // 窗口已开：同步刷新信号并前置即可，无需重建视图。
             refreshModel.reloadToken += 1
-            existing.center()
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -25,19 +24,24 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
             refreshModel: refreshModel)
         let hostingController = NSHostingController(rootView: historyView)
 
-        let win = NSWindow(contentViewController: hostingController)
-        win.title = NSLocalizedString("Notification History", comment: "")
-        win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        win.titleVisibility = .hidden
-        win.titlebarAppearsTransparent = true
+        let win = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        win.title = PreferencesManager.shared.resolvedLocale == "zh" ? "提醒历史" : "Notification History"
+        win.titleVisibility = .visible
+        win.titlebarSeparatorStyle = .none
+        win.backgroundColor = .windowBackgroundColor
         win.toolbarStyle = .unifiedCompact
         win.tabbingMode = .disallowed
+        win.contentViewController = hostingController
         win.setContentSize(NSSize(width: 620, height: 460))
-        win.minSize = NSSize(width: 560, height: 380)
+        win.contentMinSize = NSSize(width: 500, height: 360)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.center()
+        win.setFrameAutosaveName("TerminalNotifier.History")
         win.makeKeyAndOrderFront(nil)
+        // Apply after SwiftUI installs its toolbar, which can reset titlebar appearance.
+        win.titlebarAppearsTransparent = true
+        win.titlebarSeparatorStyle = .none
         NSApp.activate(ignoringOtherApps: true)
 
         self.window = win

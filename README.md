@@ -158,3 +158,31 @@ MIT License
 ## 致谢
 
 灵感来自各种编程 IDE 里的宠物陪伴插件，以及总是被码头红点忽略掉的开发者们。
+
+### Modern macOS local preview
+
+The interface uses native sidebars, grouped forms and toolbars. macOS 26 adds
+Liquid Glass; macOS 13–15 use standard controls and materials. Build with a
+macOS 26 SDK or newer (for example, Xcode 26).
+
+Incoming reminders appear in a compact, nonactivating panel. **Close** and
+**Later** never switch applications; **Open source** does. The existing
+`switchToTerminal` preference now applies only to clicking the cat. Escape
+closes a reminder when its panel has keyboard focus; it does not intercept
+Escape in another app. Reduced Motion replaces travel with fades, and Reduced
+Transparency uses an opaque surface.
+
+To build an Apple silicon DMG for local review without installing or publishing:
+
+```bash
+bash package-dmg.sh
+```
+
+The DMG and SHA-256 checksum are written to `build/`. Packaging defaults to
+ad-hoc signing and does not notarize the app. Set `SIGN_IDENTITY` explicitly
+if you have a signing identity. The build script's normal signing default is
+unchanged.
+
+Run `bash test.sh` for headless regressions. In a macOS GUI session, run
+`TN_RUN_UI_TESTS=1 bash test.sh` to also check window resizing, bubble control
+layout, nonactivating panel focus and reduced-motion animation completion.

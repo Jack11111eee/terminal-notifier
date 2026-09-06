@@ -1,6 +1,15 @@
 import AppKit
 
 class PetSpriteView: NSView {
+    var onPress: (() -> Void)?
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { onPress?() }
+    override func accessibilityPerformPress() -> Bool {
+        guard let onPress else { return false }
+        onPress()
+        return true
+    }
+
     private let defaultSize = NSSize(width: Constants.defaultPetSize, height: Constants.defaultPetSize)
 
     // 像素猫素材(16×16 设计,@2x PNG)。加载一次,跨实例复用。

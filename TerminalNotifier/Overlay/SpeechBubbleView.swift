@@ -1,156 +1,227 @@
 import AppKit
+import SwiftUI
 
-class SpeechBubbleView: NSView {
+/// Standard text and buttons remain accessible inside a single material surface.
+final class SpeechBubbleView: NSView {
     var text: String = "" {
-        didSet { needsDisplay = true }
+        didSet {
+            messageLabel.stringValue = text
+            messageLabel.toolTip = text
+            messageLabel.setAccessibilityValue(text)
+            messageLabel.invalidateIntrinsicContentSize()
+            needsLayout = true
+        }
     }
+    var heading: String = "Terminal Notifier" { didSet { headingLabel.stringValue = heading } }
     var onSnoozeTapped: (() -> Void)?
-    var snoozeTitle: String = "" {
-        didSet { snoozeButton.title = snoozeTitle }
-    }
+    var onCloseTapped: (() -> Void)?
+    var onOpenTapped: (() -> Void)?
+    var snoozeTitle: String = "" { didSet { snoozeButton.title = snoozeTitle } }
+    let snoozeButton = FirstClickButton(title: "", target: nil, action: nil)
+    let closeButton = FirstClickButton(title: "", target: nil, action: nil)
+    let openButton = FirstClickButton(title: "", target: nil, action: nil)
+    private let headingLabel = NSTextField(labelWithString: "Terminal Notifier")
+    let messageLabel = NSTextField(wrappingLabelWithString: "")
+    private let content = NSView()
+    private var surface: NSView?
+    private var displayObserver: NSObjectProtocol?
+    private var messageHeight: NSLayoutConstraint?
 
-    /// 「稍后」按钮暴露给 OverlayContentView 做 hit-test 优先命中判断。
-    /// 使用 CursorButton 子类，hover 时切换为手型光标（修复"点了稍后没反馈"）。
-    let snoozeButton: CursorButton = {
-        let button = CursorButton(title: "", target: nil, action: nil)
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        button.contentTintColor = NSColor.secondaryLabelColor
-        return button
-    }()
-
-    /// 简单 NSButton 子类：hover 时切换成手型光标。
-    final class CursorButton: NSButton {
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            for area in trackingAreas { removeTrackingArea(area) }
-            addTrackingArea(NSTrackingArea(
-                rect: bounds,
-                options: [.mouseEnteredAndExited, .activeAlways],
-                owner: self,
-                userInfo: nil))
-        }
-        override func mouseEntered(with event: NSEvent) {
-            super.mouseEntered(with: event)
-            NSCursor.pointingHand.push()
-        }
-        override func mouseExited(with event: NSEvent) {
-            NSCursor.pop()
-            super.mouseExited(with: event)
-        }
+    final class FirstClickButton: NSButton {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override var needsPanelToBecomeKey: Bool { true }
     }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        let zh = PreferencesManager.shared.resolvedLocale == "zh"
+        headingLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        headingLabel.textColor = .secondaryLabelColor
+        headingLabel.lineBreakMode = .byTruncatingTail
+        messageLabel.font = Self.messageFont
+        messageLabel.preferredMaxLayoutWidth = 280
+        messageLabel.textColor = .labelColor
+        messageLabel.maximumNumberOfLines = 6
+        messageLabel.lineBreakMode = .byWordWrapping
+        messageLabel.cell?.wraps = true
+        messageLabel.cell?.isScrollable = false
+        messageLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        messageLabel.setAccessibilityRole(.staticText)
+
+        snoozeButton.title = zh ? "稍后" : "Later"
+        openButton.title = zh ? "打开来源" : "Open source"
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: zh ? "关闭提醒" : "Close reminder")
+        closeButton.setAccessibilityLabel(zh ? "关闭提醒" : "Close reminder")
+        closeButton.toolTip = zh ? "关闭提醒，不切换应用" : "Close without switching apps"
+        closeButton.isBordered = false
+        closeButton.keyEquivalent = "\u{1b}"
+        for button in [snoozeButton, openButton] {
+            button.bezelStyle = .rounded
+            button.controlSize = .regular
+            button.font = .systemFont(ofSize: 13)
+        }
+        for view in [headingLabel, messageLabel, closeButton, snoozeButton, openButton] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(view)
+        }
         snoozeButton.target = self
         snoozeButton.action = #selector(snoozeClicked)
-        addSubview(snoozeButton)
-    }
-
-    @objc private func snoozeClicked() {
-        onSnoozeTapped?()
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        openButton.target = self
+        openButton.action = #selector(openClicked)
+        let height = messageLabel.heightAnchor.constraint(equalToConstant: 18)
+        height.isActive = true
+        messageHeight = height
+        NSLayoutConstraint.activate([
+            headingLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            headingLabel.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
+            headingLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
+            closeButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            closeButton.centerYAnchor.constraint(equalTo: headingLabel.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 28),
+            closeButton.heightAnchor.constraint(equalToConstant: 28),
+            messageLabel.topAnchor.constraint(equalTo: headingLabel.bottomAnchor, constant: 8),
+            messageLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            messageLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            messageLabel.bottomAnchor.constraint(lessThanOrEqualTo: openButton.topAnchor, constant: -8),
+            openButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            openButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
+            openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+            snoozeButton.trailingAnchor.constraint(equalTo: openButton.leadingAnchor, constant: -10),
+            snoozeButton.centerYAnchor.constraint(equalTo: openButton.centerYAnchor),
+            snoozeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+            snoozeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
+            snoozeButton.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 16)
+        ])
+        updateSurface()
+        displayObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in self?.updateSurface() }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    static func preferredSize(for text: String, width: CGFloat) -> NSSize {
-        let contentInsets = NSEdgeInsets(top: 16, left: 24, bottom: 16, right: 24)
-        let availableWidth = width - contentInsets.left - contentInsets.right
-        let attributed = NSAttributedString(string: text, attributes: textAttributes)
-        let measured = attributed.boundingRect(
-            with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-        // 高度 = 文字 + 上下 padding + 底部按钮区，三者独立不累加进文字区
-        let height = max(64, ceil(measured.height) + contentInsets.top + contentInsets.bottom + Self.snoozeAreaHeight)
-        return NSSize(width: width, height: height)
+    deinit {
+        if let displayObserver { NSWorkspace.shared.notificationCenter.removeObserver(displayObserver) }
     }
 
-    /// 气泡底部为「稍后」按钮预留的固定高度（文字区与按钮区的分界）。
-    private static let snoozeAreaHeight: CGFloat = 28
+    private func updateSurface() {
+        content.removeFromSuperview()
+        surface?.removeFromSuperview()
+        let background: NSView
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+            background = NSView()
+            background.wantsLayer = true
+            background.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            background.layer?.cornerRadius = 20
+            background.addSubview(content)
+        } else {
+#if compiler(>=6.2)
+            if #available(macOS 26.0, *) {
+                // Appearance stays active without making the panel key or activating the app.
+                let glass = NSHostingView(rootView: ReminderGlassSurface())
+                glass.sizingOptions = []
+                let backdrop = NSVisualEffectView()
+                backdrop.material = .underWindowBackground
+                backdrop.blendingMode = .behindWindow
+                backdrop.state = .active
+                backdrop.wantsLayer = true
+                backdrop.layer?.cornerRadius = 20
+                backdrop.layer?.masksToBounds = true
+                backdrop.addSubview(glass)
+                glass.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    glass.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
+                    glass.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
+                    glass.topAnchor.constraint(equalTo: backdrop.topAnchor),
+                    glass.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor)
+                ])
+                backdrop.addSubview(content)
+                background = backdrop
+            } else {
+                background = makeMaterialSurface()
+            }
+#else
+            background = makeMaterialSurface()
+#endif
+        }
+        addSubview(background)
+        background.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            background.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            content.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            content.topAnchor.constraint(equalTo: background.topAnchor),
+            content.bottomAnchor.constraint(equalTo: background.bottomAnchor)
+        ])
+        surface = background
+        background.wantsLayer = true
+        background.layer?.borderWidth = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0
+        background.layer?.borderColor = NSColor.labelColor.cgColor
+    }
+
+    private func makeMaterialSurface() -> NSView {
+        let material = NSVisualEffectView()
+        material.material = .popover
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.cornerRadius = 20
+        material.layer?.masksToBounds = true
+        material.addSubview(content)
+        return material
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateSurface()
+    }
 
     override func layout() {
+        // Resolve the line height before AppKit lays out the first, non-key frame.
+        // NSTextField's intrinsic height may otherwise remain at one line until focus changes.
+        messageLabel.preferredMaxLayoutWidth = max(1, bounds.width - 48)
+        messageHeight?.constant = Self.textHeight(for: text, width: bounds.width)
         super.layout()
-        let drawingBounds = bounds.insetBy(dx: 8, dy: 6)
-        let btnSize = NSSize(width: 44, height: 18)
-        // 按钮放在底部预留区（snoozeAreaHeight=28）的垂直中心
-        snoozeButton.frame = NSRect(
-            x: drawingBounds.maxX - btnSize.width - 12,
-            y: drawingBounds.minY + (Self.snoozeAreaHeight - btnSize.height) / 2,
-            width: btnSize.width,
-            height: btnSize.height
-        )
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        let drawingBounds = bounds.insetBy(dx: 8, dy: 6)
-        let bubbleRect = drawingBounds
-        let bubblePath = NSBezierPath(roundedRect: bubbleRect, xRadius: 18, yRadius: 18)
-        let fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.96)
-        let strokeColor = NSColor.separatorColor.withAlphaComponent(0.72)
-
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(isDarkMode ? 0.36 : 0.16)
-        shadow.shadowBlurRadius = 18
-        shadow.shadowOffset = NSSize(width: 0, height: -4)
-        shadow.set()
-
-        fillColor.setFill()
-        bubblePath.fill()
-        NSGraphicsContext.restoreGraphicsState()
-
-        strokeColor.setStroke()
-        bubblePath.lineWidth = 1
-        bubblePath.stroke()
-
-        drawText(in: bubbleRect)
-    }
-
-    private func drawText(in bubbleRect: NSRect) {
-        let hInset: CGFloat = 24
-        let vInset: CGFloat = 15
-        let availableWidth = bubbleRect.width - hInset * 2
-        let attributed = NSAttributedString(string: text, attributes: Self.textAttributes)
-        let drawOptions: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
-        let measured = attributed.boundingRect(
-            with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
-            options: drawOptions
-        )
-        // 文字占用气泡上部区域（总高 - 底部按钮区），在该子区域内垂直居中。
-        // 这样短文字不会被推进按钮区，长文字也不溢出。
-        let textRegion = NSRect(
-            x: bubbleRect.minX,
-            y: bubbleRect.minY + Self.snoozeAreaHeight,
-            width: bubbleRect.width,
-            height: bubbleRect.height - Self.snoozeAreaHeight
-        )
-        let textHeight = min(ceil(measured.height), textRegion.height - vInset * 2)
-        let textRect = NSRect(
-            x: bubbleRect.minX + hInset,
-            y: textRegion.midY - textHeight / 2,
-            width: availableWidth,
-            height: textHeight
-        )
-        attributed.draw(with: textRect, options: drawOptions)
-    }
-
-    private var isDarkMode: Bool {
-        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-    }
-
-    private static var textAttributes: [NSAttributedString.Key: Any] {
+    static let messageFont = NSFont.systemFont(ofSize: 14, weight: .regular)
+    static func textHeight(for text: String, width: CGFloat) -> CGFloat {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
         paragraph.lineBreakMode = .byWordWrapping
-        paragraph.lineSpacing = 1.5
+        let measured = NSAttributedString(string: text, attributes: [
+            .font: messageFont, .paragraphStyle: paragraph
+        ]).boundingRect(with: NSSize(width: max(1, width - 48), height: 10000),
+                        options: [.usesLineFragmentOrigin, .usesFontLeading])
+        let lineHeight = ceil(messageFont.ascender - messageFont.descender + messageFont.leading)
+        return max(lineHeight, min(ceil(measured.height) + 2, lineHeight * 6))
+    }
 
-        return [
-            .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraph
-        ]
+    static func preferredSize(for text: String, width: CGFloat) -> NSSize {
+        NSSize(width: width, height: max(122, textHeight(for: text, width: width) + 100))
+    }
+
+    @objc private func snoozeClicked() { onSnoozeTapped?() }
+    @objc private func closeClicked() { onCloseTapped?() }
+    @objc private func openClicked() { onOpenTapped?() }
+}
+
+#if compiler(>=6.2)
+@available(macOS 26.0, *)
+private struct ReminderGlassSurface: View {
+    var body: some View {
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            .environment(\.appearsActive, true)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
+#endif

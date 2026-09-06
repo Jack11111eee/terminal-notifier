@@ -188,7 +188,7 @@ class NotificationStateMachine {
                 source: .terminal,
                 targetWindow: nil)
 
-        case (.showing, .userDismissed):
+        case (.detected, .userDismissed), (.showing, .userDismissed):
             longWaitTimer?.invalidate()
             autoDismissTimer?.invalidate()
             currentState = .animatingOut
@@ -196,7 +196,7 @@ class NotificationStateMachine {
             delegate?.stateMachine(self, didTransitionTo: currentState)
             delegate?.stateMachineShouldDismissOverlay(self)
 
-        case (.showing, .userSnoozed):
+        case (.detected, .userSnoozed), (.showing, .userSnoozed):
             longWaitTimer?.invalidate()
             autoDismissTimer?.invalidate()
             let info = currentPendingInfo()

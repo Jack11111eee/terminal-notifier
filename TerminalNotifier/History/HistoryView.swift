@@ -15,6 +15,22 @@ struct HistoryView: View {
 
     @AppStorage("language") private var language: String = "system"
     @State private var records: [NotificationRecord] = []
+    @State private var selection: UUID?
+    @State private var searchText = ""
+    @State private var confirmClear = false
+    @FocusState private var searchFocused: Bool
+
+    private var filteredRecords: [NotificationRecord] {
+        records.filter { searchText.isEmpty || $0.message.localizedCaseInsensitiveContains(searchText)
+            || ($0.windowTitle ?? "").localizedCaseInsensitiveContains(searchText)
+            || $0.badgeLabel.localizedCaseInsensitiveContains(searchText) }.sorted { $0.timestamp > $1.timestamp }
+    }
+    private var days: [Date] {
+        Array(Set(filteredRecords.map { Calendar.current.startOfDay(for: $0.timestamp) })).sorted(by: >)
+    }
+    private var selectedRecord: NotificationRecord? {
+        filteredRecords.first { $0.id == selection }
+    }
 
     private var locale: String { PreferencesManager.resolveLocale(language) }
 
@@ -27,68 +43,122 @@ struct HistoryView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-
-            Divider()
-
+        Group {
             if records.isEmpty {
                 emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(records) { record in
-                            HistoryRecordRow(record: record, locale: locale)
-                                .contentShape(Rectangle())
-                                .onTapGesture { onRecordTapped?(record) }
-                        }
-                    }
-                    .padding(18)
+            } else if filteredRecords.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass").font(.largeTitle).foregroundStyle(.secondary)
+                    Text(historyLang("No matching reminders", zh: "没有匹配的提醒", locale: locale)).font(.headline)
+                    Text(historyLang("Try a different search.", zh: "试试其他关键词。", locale: locale)).foregroundStyle(.secondary)
                 }
-                .background(Color(nsColor: .windowBackgroundColor))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $selection) {
+                    ForEach(days, id: \.self) { day in
+                        Section(dayTitle(day)) {
+                            ForEach(filteredRecords.filter { Calendar.current.isDate($0.timestamp, inSameDayAs: day) }) { record in
+                                HistoryRecordRow(record: record, locale: locale)
+                                    .tag(record.id)
+                                    .listRowSeparator(.hidden)
+                                    .contextMenu {
+                                        Button(historyLang("Open source", zh: "打开来源", locale: locale)) {
+                                            onRecordTapped?(record)
+                                        }.disabled(onRecordTapped == nil)
+                                        Button(historyLang("Copy message", zh: "复制消息", locale: locale)) {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(record.message, forType: .string)
+                                        }
+                                    }
+                            }
+                        }
+                        .listSectionSeparator(.hidden)
+                    }
+                }
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
         }
-        .frame(width: 620, height: 460)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 500, minHeight: 360)
+        .background(Color.clear)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(historyLang("Notification History", zh: "提醒历史", locale: locale))
+        .clipped()
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    Button { searchFocused = true } label: {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("f", modifiers: .command)
+                    .accessibilityLabel(historyLang("Search reminders", zh: "搜索提醒", locale: locale))
+                    TextField(historyLang("Search reminders", zh: "搜索提醒", locale: locale), text: $searchText)
+                        .textFieldStyle(.plain)
+                        .focused($searchFocused)
+                    if !searchText.isEmpty {
+                        Button { searchText = ""; searchFocused = true } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(historyLang("Clear search", zh: "清除搜索", locale: locale))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .tnGlassSurface(cornerRadius: 18)
+                .frame(maxWidth: 320)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
+            .background(Color.clear)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    if let record = selectedRecord { onRecordTapped?(record) }
+                } label: {
+                    Label(historyLang("Open source", zh: "打开来源", locale: locale), systemImage: "arrow.up.forward.app")
+                        .font(.system(size: 15)).frame(minWidth: 32, minHeight: 32)
+                }
+                .keyboardShortcut(.return, modifiers: [])
+                .disabled(selectedRecord == nil || onRecordTapped == nil)
+                Button(role: .destructive) { confirmClear = true } label: {
+                    Label(historyLang("Clear history", zh: "清空历史", locale: locale), systemImage: "trash")
+                        .font(.system(size: 15)).frame(minWidth: 32, minHeight: 32)
+                }
+                .disabled(records.isEmpty)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack {
+                Text(historyLang("\(records.count) recent records", zh: "最近 \(records.count) 条记录", locale: locale))
+                Spacer()
+                if let summary = todaySummary { Text(summary) }
+            }
+            .font(.caption).foregroundStyle(.secondary)
+            .padding(.horizontal, 20).padding(.vertical, 10)
+            .background(Color.clear)
+        }
+        .confirmationDialog(historyLang("Clear all notification history?", zh: "清空所有提醒历史？", locale: locale),
+                            isPresented: $confirmClear, titleVisibility: .visible) {
+            Button(historyLang("Clear history", zh: "清空历史", locale: locale), role: .destructive) {
+                historyManager.clearHistory()
+                reload()
+            }
+            Button(historyLang("Cancel", zh: "取消", locale: locale), role: .cancel) {}
+        } message: {
+            Text(historyLang("This cannot be undone.", zh: "此操作无法撤销。", locale: locale))
+        }
         .onAppear(perform: reload)
-        // 共享 token 变化（新增记录/清空）即刷新。
         .onChange(of: refreshModel.reloadToken) { _ in reload() }
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundColor(.accentColor)
-                .frame(width: 34, height: 34)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(historyLang("Notification History", zh: "提醒历史", locale: locale))
-                    .font(.system(size: 22, weight: .semibold))
-                Text(historyLang("\(records.count) recent records", zh: "最近 \(records.count) 条记录", locale: locale))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                if let summary = todaySummary {
-                    Text(summary)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            Spacer()
-
-            Button(role: .destructive) {
-                historyManager.clearHistory()
-                reload()
-            } label: {
-                Label(historyLang("Clear", zh: "清空", locale: locale), systemImage: "trash")
-            }
-            .disabled(records.isEmpty)
-            .tnGlassButtonIfAvailable()
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 18)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+    private func dayTitle(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return historyLang("Today", zh: "今天", locale: locale) }
+        if Calendar.current.isDateInYesterday(date) { return historyLang("Yesterday", zh: "昨天", locale: locale) }
+        return date.formatted(.dateTime.year().month().day().locale(Locale(identifier: locale)))
     }
 
     private var emptyState: some View {
@@ -105,11 +175,12 @@ struct HistoryView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.clear)
     }
 
     private func reload() {
         records = historyManager.getRecords()
+        if !records.contains(where: { $0.id == selection }) { selection = nil }
     }
 
     /// 「今日 N 次 · 需确认 X · 完成 Y · 终端 Z」统计行；今日 0 条时返回 nil 不显示。
@@ -165,17 +236,13 @@ private struct HistoryRecordRow: View {
                     .font(.system(size: 13))
                     .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let title = record.windowTitle, !title.isEmpty {
+                    Text(title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
-        )
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
     }
 
     private var timeText: String {
