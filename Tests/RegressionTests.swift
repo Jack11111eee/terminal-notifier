@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+import SwiftUI
 
 final class HookManagerTests: XCTestCase {
     private var directory: URL!
@@ -148,6 +149,34 @@ final class NotificationStateMachineTests: XCTestCase {
         }
     }
 
+    func testDismissDuringEntranceIgnoresLateAnimationCompletion() {
+        send(0)
+        send(1)
+        machine.handleEvent(.userDismissed)
+        XCTAssertEqual(machine.currentState, .animatingOut)
+        machine.handleEvent(.dropAnimationCompleted)
+        XCTAssertEqual(machine.currentState, .animatingOut)
+        machine.handleEvent(.jumpBackCompleted)
+        machine.handleEvent(.cooldownExpired)
+        assertRequests([0, 1])
+    }
+
+    func testSnoozeDuringEntrancePreservesSourceAndDoesNotResumeEntrance() {
+        send(1)
+        machine.handleEvent(.userSnoozed)
+        XCTAssertEqual(machine.currentState, .pending)
+        XCTAssertEqual(machine.pendingInfo?.source, .codexApp)
+        XCTAssertEqual(machine.pendingInfo?.targetWindow, event(1).targetWindow)
+        machine.handleEvent(.dropAnimationCompleted)
+        XCTAssertEqual(machine.currentState, .pending)
+        machine.handleEvent(.jumpBackCompleted)
+        machine.handleEvent(.snoozeElapsed)
+        XCTAssertEqual(machine.currentState, .detected(count: 1))
+        XCTAssertEqual(recorder.requests.count, 2)
+        XCTAssertEqual(recorder.requests.last?.source, .codexApp)
+        XCTAssertEqual(recorder.requests.last?.targetWindow, event(1).targetWindow)
+    }
+
     func testBatchDuringDropIsDeliveredInOrderWithContext() {
         for index in 0..<4 { send(index) }
         machine.handleEvent(.badgeCleared)
@@ -232,6 +261,114 @@ final class NotificationStateMachineTests: XCTestCase {
 
 }
 
+/// Opt-in window tests require a GUI session; ordinary regressions remain headless.
+final class WindowLayoutTests: XCTestCase {
+    private func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
+
+    func testSettingsAndHistoryResizeWithWindow() {
+        let settings = SettingsWindowController()
+        settings.showSettings(preferences: .shared)
+        let history = HistoryWindowController()
+        history.showHistory(historyManager: NotificationHistoryManager(storageKey: "tn-layout-test-unused"))
+        let windows = NSApp.windows.filter { $0.isVisible }
+        XCTAssertEqual(windows.count, 2)
+        for window in windows {
+            if window.titleVisibility == .visible {
+                XCTAssertFalse(window.styleMask.contains(.fullSizeContentView),
+                               "Native titled content must not extend into the titlebar")
+            }
+            window.setContentSize(NSSize(width: 960, height: 680))
+            settle()
+            XCTAssertEqual(window.contentView?.bounds.width ?? 0, 960, accuracy: 1)
+            XCTAssertGreaterThan(window.contentView?.bounds.height ?? 0, 600)
+            window.setContentSize(window.contentMinSize)
+            settle()
+            XCTAssertEqual(window.contentView?.bounds.width ?? 0, window.contentMinSize.width, accuracy: 1)
+            if window.titleVisibility == .hidden {
+                for (index, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
+                    let button = window.standardWindowButton(kind)!
+                    let rect = button.convert(button.bounds, to: nil)
+                    XCTAssertEqual(rect.midX, 26 + CGFloat(index) * 23, accuracy: 1)
+                    XCTAssertEqual(window.frame.height - rect.midY, 26, accuracy: 1)
+                }
+            }
+            window.close()
+        }
+    }
+
+    func testBubbleControlsStayInsideMaterialForLongMessages() {
+        for message in ["Ready", String(repeating: "这是需要处理的长通知。 Long reminder message. ", count: 30)] {
+            let size = SpeechBubbleView.preferredSize(for: message, width: 304)
+            let bubble = SpeechBubbleView(frame: NSRect(origin: .zero, size: size))
+            bubble.text = message
+            let window = NSPanel(contentRect: NSRect(origin: .zero, size: size),
+                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = bubble
+            window.orderFrontRegardless()
+            settle()
+            bubble.layoutSubtreeIfNeeded()
+            defer { window.close() }
+            for button in [bubble.closeButton, bubble.snoozeButton, bubble.openButton] {
+                let rect = button.convert(button.bounds, to: bubble)
+                XCTAssertTrue(bubble.bounds.contains(rect), "Button must stay inside the bubble: \(rect)")
+                XCTAssertGreaterThanOrEqual(rect.height, 28)
+            }
+            let textRect = bubble.messageLabel.convert(bubble.messageLabel.bounds, to: bubble)
+            XCTAssertTrue(bubble.bounds.contains(textRect))
+            if message.count > 100 {
+                XCTAssertGreaterThan(textRect.height, 30, "Long messages must wrap to multiple lines")
+            }
+            let later = bubble.snoozeButton.convert(bubble.snoozeButton.bounds, to: bubble)
+            let open = bubble.openButton.convert(bubble.openButton.bounds, to: bubble)
+            XCTAssertFalse(later.intersects(open))
+            XCTAssertLessThan(size.height, 400, "Long messages must not create a screen-sized overlay")
+            if message == "Ready" {
+                XCTAssertLessThanOrEqual(size.height, 125, "Short reminders should remain compact")
+            }
+        }
+    }
+
+    func testIncomingOverlayDoesNotBecomeKeyAndExplicitFocusWorks() throws {
+        let screen = try XCTUnwrap(NSScreen.main)
+        let overlay = OverlayWindowController()
+        defer { overlay.forceClose() }
+        overlay.show(on: screen, message: "这是一条示例提醒。准备好后，回到你的工作。")
+        let panel = try XCTUnwrap(NSApp.windows.first { $0 is OverlayWindow && $0.isVisible })
+        XCTAssertFalse(panel.isKeyWindow)
+        XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
+        XCTAssertLessThan(panel.frame.width, screen.visibleFrame.width)
+        let content = try XCTUnwrap(panel.contentView as? OverlayContentView)
+        let beforeFocus = content.bubbleView.messageLabel.frame
+        XCTAssertGreaterThan(beforeFocus.height, 28, "The second line must exist before any click")
+        XCTAssertFalse(panel.isKeyWindow)
+        overlay.focusForInteraction()
+        settle()
+        XCTAssertTrue(panel.isKeyWindow)
+        XCTAssertEqual(content.bubbleView.messageLabel.frame.height, beforeFocus.height, accuracy: 0.5,
+                       "Focusing must not change message layout")
+        overlay.updateMessage(String(repeating: "Long reminder text. ", count: 12))
+        content.layoutSubtreeIfNeeded()
+        let label = content.bubbleView.messageLabel
+        let textRect = label.convert(label.bounds, to: content.bubbleView)
+        XCTAssertTrue(content.bubbleView.bounds.contains(textRect))
+    }
+
+    func testReducedMotionAnimationsCompleteWithoutTravel() {
+        let layer = CALayer()
+        layer.position = CGPoint(x: 100, y: 100)
+        let enter = expectation(description: "Reduced-motion entrance completes")
+        DropBounceAnimator().animate(layer: layer, from: 500, to: 100, reduceMotion: true) { enter.fulfill() }
+        wait(for: [enter], timeout: 2)
+        XCTAssertEqual(layer.transform.m42, 0)
+        let exit = expectation(description: "Reduced-motion exit completes")
+        JumpBackAnimator().animate(layer: layer, from: layer.position,
+                                   to: CGPoint(x: 100, y: 500), reduceMotion: true) { exit.fulfill() }
+        wait(for: [exit], timeout: 2)
+        XCTAssertEqual(layer.transform.m42, 0)
+    }
+}
+
 @main
 enum RegressionTests {
     static func main() {
@@ -243,6 +380,11 @@ enum RegressionTests {
         let suite = XCTestSuite(name: "Terminal Notifier regressions")
         suite.addTest(HookManagerTests.defaultTestSuite)
         suite.addTest(NotificationStateMachineTests.defaultTestSuite)
+        if ProcessInfo.processInfo.environment["TN_RUN_UI_TESTS"] == "1" {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.accessory)
+            suite.addTest(WindowLayoutTests.defaultTestSuite)
+        }
         guard suite.testCaseCount > 0 else { fatalError("No regression tests discovered") }
         suite.run()
         exit(suite.testRun?.hasSucceeded == true ? 0 : 1)

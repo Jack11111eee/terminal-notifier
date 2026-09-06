@@ -7,15 +7,15 @@ class JumpBackAnimator {
     /// Animate a layer from its current position to the menu bar position
     /// using a direct vertical path.
     func animate(layer: CALayer, from currentPos: CGPoint, to targetPos: CGPoint,
-                 completion: @escaping () -> Void) {
+                 reduceMotion: Bool = false, completion: @escaping () -> Void) {
 
         let startOffset = currentPos.y - layer.position.y
-        let endOffset = targetPos.y - layer.position.y
+        let endOffset = reduceMotion ? startOffset : targetPos.y - layer.position.y
 
         let translationAnim = CABasicAnimation(keyPath: "transform.translation.y")
         translationAnim.fromValue = startOffset
         translationAnim.toValue = endOffset
-        translationAnim.duration = Self.duration
+        translationAnim.duration = (reduceMotion ? 0.15 : Self.duration)
         translationAnim.timingFunction = CAMediaTimingFunction(name: .easeIn)
         translationAnim.fillMode = .forwards
         translationAnim.isRemovedOnCompletion = false
@@ -23,14 +23,14 @@ class JumpBackAnimator {
         let opacityAnim = CABasicAnimation(keyPath: "opacity")
         opacityAnim.fromValue = layer.presentation()?.opacity ?? layer.opacity
         opacityAnim.toValue = 0
-        opacityAnim.duration = Self.duration
+        opacityAnim.duration = (reduceMotion ? 0.15 : Self.duration)
         opacityAnim.timingFunction = CAMediaTimingFunction(name: .easeIn)
         opacityAnim.fillMode = .forwards
         opacityAnim.isRemovedOnCompletion = false
 
         let group = CAAnimationGroup()
         group.animations = [translationAnim, opacityAnim]
-        group.duration = Self.duration
+        group.duration = (reduceMotion ? 0.15 : Self.duration)
         group.timingFunction = CAMediaTimingFunction(name: .easeIn)
         group.fillMode = .forwards
         group.isRemovedOnCompletion = false

@@ -11,23 +11,29 @@ class SelfCheckWindowController: NSObject, NSWindowDelegate {
 
         if let existing = window {
             existing.contentViewController = hosting
-            existing.center()
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let win = NSWindow(contentViewController: hosting)
-        win.title = NSLocalizedString("Self-Check", comment: "")
-        win.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
-        win.titleVisibility = .hidden
-        win.titlebarAppearsTransparent = true
+        let win = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        win.title = PreferencesManager.shared.resolvedLocale == "zh" ? "自检与修复" : "Self-Check & Repair"
+        win.titleVisibility = .visible
+        win.titlebarSeparatorStyle = .none
+        win.backgroundColor = .windowBackgroundColor
         win.tabbingMode = .disallowed
+        win.toolbarStyle = .unifiedCompact
+        win.contentMinSize = NSSize(width: 500, height: 360)
+        win.contentViewController = hosting
         win.setContentSize(NSSize(width: 520, height: 400))
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.center()
+        win.setFrameAutosaveName("TerminalNotifier.SelfCheck")
         win.makeKeyAndOrderFront(nil)
+        // Apply after SwiftUI installs its toolbar, which can reset titlebar appearance.
+        win.titlebarAppearsTransparent = true
+        win.titlebarSeparatorStyle = .none
         NSApp.activate(ignoringOtherApps: true)
 
         self.window = win
@@ -62,29 +68,6 @@ private struct SelfCheckView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "stethoscope")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundColor(.accentColor)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(lang("Self-Check & Repair", zh: "自检与修复"))
-                        .font(.system(size: 22, weight: .semibold))
-                    Text(lang("Detect and fix permission & hook issues.", zh: "检测并修复权限与 hook 的隐性问题。"))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Button {
-                    runChecks()
-                } label: {
-                    Label(lang("Re-run", zh: "重新检查"), systemImage: "arrow.clockwise")
-                }
-            }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 18)
-
-            Divider()
-
             ScrollView {
                 VStack(spacing: 10) {
                     ForEach(items) { item in
@@ -94,8 +77,24 @@ private struct SelfCheckView: View {
                 .padding(18)
             }
         }
-        .frame(width: 520, height: 400)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 500, minHeight: 360)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(lang("Self-Check & Repair", zh: "自检与修复"))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { runChecks() } label: {
+                    Label(lang("Re-run", zh: "重新检查"), systemImage: "arrow.clockwise")
+                }
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            Label(items.contains { $0.status == .failed }
+                  ? lang("Some items need attention", zh: "部分项目需要处理")
+                  : lang("No issues detected", zh: "未发现异常"),
+                  systemImage: items.contains { $0.status == .failed } ? "exclamationmark.circle" : "checkmark.circle")
+                .font(.headline).padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.clear)
         .onAppear(perform: runChecks)
     }
 
@@ -205,7 +204,7 @@ private struct SelfCheckView: View {
         return CheckItem(
             icon: "doc.on.doc",
             title: lang("Claude config backup", zh: "Claude 配置备份"),
-            status: hasBackup ? .ok : .failed,
+            status: hasBackup ? .ok : .disabled,
             detail: hasBackup
                 ? lang("A timestamped backup exists.", zh: "已存在带时间戳的备份。")
                 : lang("No backup yet — created on next hook change.", zh: "暂无备份，将在下次修改 hook 时自动生成。"),

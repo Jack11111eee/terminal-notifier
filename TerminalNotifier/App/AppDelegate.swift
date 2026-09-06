@@ -46,6 +46,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         codexMonitor = CodexAppMonitor()
         settingsController = SettingsWindowController()
         historyController = HistoryWindowController()
+        configureSettingsActions()
+        overlayController.onOpenSourceRequested = { [weak self] in
+            guard let self else { return }
+            switch self.stateMachine.currentState {
+            case .detected, .showing:
+                self.stateMachine.handleEvent(.userDismissed)
+                self.activateOverlaySource()
+            default: break
+            }
+        }
         stateMachine = NotificationStateMachine()
         stateMachine.delegate = self
         statusBarController.pendingInfoProvider = { [weak self] in
@@ -158,6 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         claudeMonitor?.stopMonitoring()
         codexMonitor?.stopMonitoring()
         overlayController?.close()
+        settingsPreviewController?.close()
     }
 
     /// 切换 Claude Code 状态检测：安装/卸载 hook + 启停监控。
@@ -220,20 +231,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let screen = targetWindow.map { TerminalWindowRegistry.screen(for: $0) }
             ?? TerminalScreenLocator.locateScreen(ownerName: source.windowOwnerName)
         tnLog("showOverlay: calling overlayController.show screen=\(screen)")
-        overlayController.show(on: screen, message: message)
+        overlayController.show(on: screen, message: message, source: source, category: category)
         soundManager.playNotificationSound(for: category)
         tnLog("showOverlay: done")
     }
 
     private func showHistory() {
         historyController.showHistory(historyManager: historyManager) { record in
-            if let tty = record.tty,
+            if record.badgeLabel == NotificationSource.codexApp.historyBadgeLabel
+                || record.category == MessageProvider.Category.codexDone.rawValue
+                || record.category == MessageProvider.Category.codexNeedsConfirm.rawValue {
+                NSWorkspace.shared.runningApplications
+                    .first { $0.bundleIdentifier == NotificationSource.codexApp.bundleIdentifier }?
+                    .activate(options: .activateIgnoringOtherApps)
+            } else if let tty = record.tty,
                let window = TerminalWindowRegistry.window(forTTY: tty) {
                 TerminalWindowRegistry.activate(window)
             } else {
                 // 找不到原窗口（已关闭/tty 复用）时降级激活 Terminal 本体，不打扰用户。
                 TerminalWindowRegistry.activate(nil)
             }
+        }
+    }
+
+    private func activateOverlaySource() {
+        if currentOverlaySource == .claudeCode || currentOverlaySource == .terminal {
+            TerminalWindowRegistry.activate(currentOverlayTargetWindow)
+        } else {
+            NSWorkspace.shared.runningApplications
+                .first { $0.bundleIdentifier == currentOverlaySource.bundleIdentifier }?
+                .activate(options: .activateIgnoringOtherApps)
+        }
+    }
+
+    // Preview uses a separate controller so it cannot replace an active notification.
+    private var settingsPreviewController: OverlayWindowController?
+    private func configureSettingsActions() {
+        settingsController.onSelfCheck = { [weak self] in self?.showSelfCheck() }
+        settingsController.onPreview = { [weak self] in
+            guard let self, let screen = NSScreen.main else { return }
+            self.settingsPreviewController?.forceClose()
+            let preview = OverlayWindowController()
+            self.settingsPreviewController = preview
+            preview.onDismissRequested = { [weak preview] in preview?.beginDismiss() }
+            preview.onOpenSourceRequested = { [weak preview] in preview?.beginDismiss() }
+            preview.onSnoozeRequested = { [weak preview] in preview?.beginDismiss() }
+            preview.onJumpBackComplete = { [weak preview] in preview?.forceClose() }
+            preview.show(on: screen, message: self.preferences.resolvedLocale == "zh"
+                ? "这是一条示例提醒。准备好后，回到你的工作。"
+                : "This is a sample reminder. Return to your work when you’re ready.",
+                source: .codexApp, category: .codexDone)
         }
     }
 
@@ -332,6 +379,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             source: info.source,
             tty: nil,
             targetWindow: info.targetWindow)))
+        overlayController.focusForInteraction()
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
@@ -345,6 +393,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         historyController = HistoryWindowController()
         overlayController = OverlayWindowController()
         historyManager = Self.previewHistoryManager()
+        configureSettingsActions()
 
         overlayController.onDismissRequested = { [weak self] in
             self?.overlayController.beginDismiss()
@@ -354,7 +403,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.overlayController.forceClose()
         }
 
-        NSApp.activate(ignoringOtherApps: true)
+        overlayController.onSnoozeRequested = { [weak self] in self?.overlayController.beginDismiss() }
+        overlayController.onOpenSourceRequested = { [weak self] in self?.overlayController.beginDismiss() }
 
         switch mode {
         case .settings:
@@ -380,9 +430,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlayController.show(
             on: screen,
             message: preferences.resolvedLocale == "zh"
-                ? "点击猫或气泡关闭"
-                : "Click the pet or bubble to dismiss"
+                ? "这是一条示例提醒。你可以关闭、稍后处理，或打开来源。"
+                : "A sample reminder. Close it, remind me later, or open the source."
         )
+        if ProcessInfo.processInfo.environment["TN_PREVIEW_FOCUS"] == "1" {
+            overlayController.focusForInteraction()
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     private static func previewHistoryManager() -> NotificationHistoryManager {
@@ -503,19 +557,10 @@ extension AppDelegate: NotificationStateMachineDelegate {
         tnLog("stateMachine: shouldUpdate msg=\(message)")
         currentOverlaySource = source
         currentOverlayTargetWindow = targetWindow
-        overlayController.updateMessage(message)
+        overlayController.updateMessage(message, source: source, category: category)
     }
     func stateMachineShouldDismissOverlay(_ sm: NotificationStateMachine) {
         tnLog("stateMachine: shouldDismiss")
-        if preferences.switchToTerminal {
-            if currentOverlaySource == .claudeCode {
-                TerminalWindowRegistry.activate(currentOverlayTargetWindow)
-            } else {
-                NSWorkspace.shared.runningApplications
-                    .first { $0.bundleIdentifier == currentOverlaySource.bundleIdentifier }?
-                    .activate(options: .activateIgnoringOtherApps)
-            }
-        }
         overlayController.beginDismiss()
     }
 }

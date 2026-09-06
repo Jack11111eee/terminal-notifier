@@ -18,12 +18,12 @@ class DropBounceAnimator {
     /// Animate a layer into its laid-out position.
     /// The view's frame stays at the final position; only temporary transform and opacity animate.
     func animate(layer: CALayer, from startY: CGFloat, to endY: CGFloat,
-                 completion: @escaping () -> Void) {
+                 reduceMotion: Bool = false, completion: @escaping () -> Void) {
 
         let startOffset = startY - endY
 
         let translationAnim = CAKeyframeAnimation(keyPath: "transform.translation.y")
-        translationAnim.values = Self.generateKeyframes(startOffset: startOffset)
+        translationAnim.values = reduceMotion ? [0, 0] : Self.generateKeyframes(startOffset: startOffset)
         translationAnim.duration = Self.duration
         translationAnim.timingFunction = CAMediaTimingFunction(name: .linear)
         translationAnim.isRemovedOnCompletion = true
@@ -31,13 +31,13 @@ class DropBounceAnimator {
         let opacityAnim = CABasicAnimation(keyPath: "opacity")
         opacityAnim.fromValue = 0
         opacityAnim.toValue = 1
-        opacityAnim.duration = min(0.28, Self.duration)
+        opacityAnim.duration = reduceMotion ? 0.15 : min(0.28, Self.duration)
         opacityAnim.timingFunction = CAMediaTimingFunction(name: .easeOut)
         opacityAnim.isRemovedOnCompletion = true
 
         let group = CAAnimationGroup()
         group.animations = [translationAnim, opacityAnim]
-        group.duration = Self.duration
+        group.duration = reduceMotion ? 0.15 : Self.duration
         group.isRemovedOnCompletion = true
 
         CATransaction.begin()
