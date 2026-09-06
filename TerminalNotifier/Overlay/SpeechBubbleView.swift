@@ -117,37 +117,35 @@ final class SpeechBubbleView: NSView {
             background.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
             background.layer?.cornerRadius = 20
             background.addSubview(content)
-        } else if #available(macOS 26.0, *) {
-            // Appearance stays active without making the panel key or activating the app.
-            let glass = NSHostingView(rootView: ReminderGlassSurface())
-            glass.sizingOptions = []
-            let backdrop = NSVisualEffectView()
-            backdrop.material = .underWindowBackground
-            backdrop.blendingMode = .behindWindow
-            backdrop.state = .active
-            backdrop.wantsLayer = true
-            backdrop.layer?.cornerRadius = 20
-            backdrop.layer?.masksToBounds = true
-            backdrop.addSubview(glass)
-            glass.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                glass.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
-                glass.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
-                glass.topAnchor.constraint(equalTo: backdrop.topAnchor),
-                glass.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor)
-            ])
-            backdrop.addSubview(content)
-            background = backdrop
         } else {
-            let material = NSVisualEffectView()
-            material.material = .popover
-            material.blendingMode = .behindWindow
-            material.state = .active
-            material.wantsLayer = true
-            material.layer?.cornerRadius = 20
-            material.layer?.masksToBounds = true
-            material.addSubview(content)
-            background = material
+#if compiler(>=6.2)
+            if #available(macOS 26.0, *) {
+                // Appearance stays active without making the panel key or activating the app.
+                let glass = NSHostingView(rootView: ReminderGlassSurface())
+                glass.sizingOptions = []
+                let backdrop = NSVisualEffectView()
+                backdrop.material = .underWindowBackground
+                backdrop.blendingMode = .behindWindow
+                backdrop.state = .active
+                backdrop.wantsLayer = true
+                backdrop.layer?.cornerRadius = 20
+                backdrop.layer?.masksToBounds = true
+                backdrop.addSubview(glass)
+                glass.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    glass.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
+                    glass.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
+                    glass.topAnchor.constraint(equalTo: backdrop.topAnchor),
+                    glass.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor)
+                ])
+                backdrop.addSubview(content)
+                background = backdrop
+            } else {
+                background = makeMaterialSurface()
+            }
+#else
+            background = makeMaterialSurface()
+#endif
         }
         addSubview(background)
         background.translatesAutoresizingMaskIntoConstraints = false
@@ -166,6 +164,18 @@ final class SpeechBubbleView: NSView {
         background.wantsLayer = true
         background.layer?.borderWidth = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0
         background.layer?.borderColor = NSColor.labelColor.cgColor
+    }
+
+    private func makeMaterialSurface() -> NSView {
+        let material = NSVisualEffectView()
+        material.material = .popover
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.cornerRadius = 20
+        material.layer?.masksToBounds = true
+        material.addSubview(content)
+        return material
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -202,6 +212,7 @@ final class SpeechBubbleView: NSView {
     @objc private func openClicked() { onOpenTapped?() }
 }
 
+#if compiler(>=6.2)
 @available(macOS 26.0, *)
 private struct ReminderGlassSurface: View {
     var body: some View {
@@ -213,3 +224,4 @@ private struct ReminderGlassSurface: View {
             .accessibilityHidden(true)
     }
 }
+#endif
