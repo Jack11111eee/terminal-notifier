@@ -4,17 +4,17 @@
 
 ## 这是什么？
 
-你在用 Claude Code 或 Codex CLI 时，是不是经常切到浏览器，然后忘了终端正等着你确认命令？
+你在使用 Claude Code 或 Codex 时，是不是经常切到其他应用，然后忘了它们正等着你确认操作？
 
-Terminal Notifier 会检测 Terminal.app 的 Dock 红点（badge）。一旦检测到，菜单栏里的像素猫就会从屏幕顶部落下来，弹到你面前，用气泡告诉你："喵~ 该看终端啦！"
+Terminal Notifier 默认检测 Terminal.app 的 Dock 红点（badge），也可以通过 Claude Code 和 Codex hooks 区分「需要确认」与「对话完成」。需要你处理时，像素猫会带着紧凑提醒出现在屏幕中央，但不会抢走当前应用的键盘焦点。
 
 ## 效果演示
 
 1. 像素猫安静地住在菜单栏里 🐱
-2. Terminal.app 的 Dock 图标出现红点（badge）
-3. 猫掉下来，弹跳落地，弹出气泡："喵~ 终端在叫你！"
-4. 你点击猫或按 Esc → 猫跳回菜单栏 → 自动切到 Terminal 窗口（可选）
-5. 10 秒冷却后，猫继续待命
+2. Terminal.app 出现 Dock 红点，或 Claude Code / Codex hook 发出事件
+3. 猫咪与提醒面板出现，但不打断你在当前应用中的输入
+4. 你可以选择「关闭」「稍后」或「打开来源」；也可以设置点击猫咪时是否打开来源
+5. 未处理的提醒可自动收起到菜单栏，并在冷却结束后继续待命
 
 ## 安装
 
@@ -43,9 +43,21 @@ open build/TerminalNotifier.app
 INSTALL=1 ./build.sh
 ```
 
+### 构建本地预览 DMG
+
+如需生成用于本地安装检查的 Apple Silicon DMG，而不安装或发布应用：
+
+```bash
+bash package-dmg.sh
+```
+
+DMG 和 SHA-256 校验文件会写入 `build/`。脚本默认使用 ad-hoc 签名，不会进行公证；如需使用已有签名身份，可显式设置 `SIGN_IDENTITY`。使用 macOS 26 SDK 构建并在 macOS 26 运行时会启用 Liquid Glass，其他构建或系统版本使用原生控件与材质回退。
+
 ### 回归测试
 
 安装完整 Xcode 并选为当前开发工具后，运行 `bash test.sh`。测试使用临时配置文件和进程内偏好，不修改实际 Claude/Codex 配置，也不会启动应用或请求系统权限。
+
+在 macOS 图形会话中，可运行 `TN_RUN_UI_TESTS=1 bash test.sh`，额外检查窗口缩放、长消息按钮布局、提醒面板焦点和减少动态效果下的动画完成行为。
 
 GitHub Actions 会在面向 `main` 的 PR 和 `main` 更新时，构建应用、校验 ad-hoc 签名并运行这些回归测试。CI 不安装应用、不使用正式签名证书，也不自动发布安装包。
 
@@ -54,13 +66,15 @@ GitHub Actions 会在面向 `main` 的 PR 和 `main` 更新时，构建应用、
 - **Badge 基础检测零权限**：默认只读 Terminal Dock badge，无需辅助功能权限或屏幕录制权限
 - **Claude Code / Codex 状态检测**（可选）：通过 hook 直接区分「需要确认」和「对话完成」，不依赖终端响铃
 - **Claude 前台多窗口归因**（可选增强）：Terminal.app 在前台时，Claude hook 事件来自非最上层 Terminal 窗口也会提醒
+- **紧凑提醒**：提醒面板不会主动抢占键盘焦点，并提供「关闭」「稍后」「打开来源」三个独立操作
 - **全屏兼容**：即使你在全屏看视频或写代码，猫也能弹出来
 - **免打扰**：设置时段（如 22:00–08:00），猫会自觉安静
 - **冷却时间**：可调（5–120 秒），防止猫刷屏
-- **通知历史**：查看过往提醒记录，点击任意记录跳转到对应终端窗口
+- **通知历史**：按日期浏览和搜索过往提醒，打开记录时跳转到对应 Terminal 或 Codex 来源
 - **分级音效**：需确认的提醒用更引人注目的提示音，普通完成提醒用温和音效，耳朵即可分辨轻重
 - **自检与修复**：菜单栏一键检查权限与 hook 状态，失败项可直接修复
 - **专注模式联动**：macOS 专注模式开启时自动静默，仅留菜单栏红点与历史记录
+- **系统辅助功能适配**：跟随系统外观、增加对比度、减少透明度和减少动态效果设置
 - **中英文**：根据系统语言自动选择，也可手动设置
 - **像素风**：纯正的像素艺术风格猫咪
 
@@ -73,7 +87,7 @@ GitHub Actions 会在面向 `main` 的 PR 和 `main` 更新时，构建应用、
 
 开启时 App 会把 hook **安全合并**进 `~/.claude/settings.json`（保留你已有的全部 hook，并在写入前生成 `settings.json.tn-backup-<时间戳>` 备份），关闭即移除。Terminal 在后台时直接提醒；Terminal 在前台时默认继续抑制，避免打扰你正在查看的窗口。
 
-**前台多窗口归因：** 如需在 Terminal.app 前台时识别非最上层 Terminal 窗口里的 Claude 事件，可额外开启「前台多窗口归因」。该增强功能会请求辅助功能权限，并可能请求控制 Terminal 的自动化权限；关闭提醒后跳转来源窗口也依赖该能力。未开启或未授权时会降级为零辅助功能权限行为：Terminal 后台提醒、Terminal 前台抑制。
+**前台多窗口归因：** 如需在 Terminal.app 前台时识别非最上层 Terminal 窗口里的 Claude 事件，可额外开启「前台多窗口归因」。该增强功能会请求辅助功能权限，并可能请求控制 Terminal 的自动化权限；选择「打开来源」或点击猫咪时定位对应窗口也依赖该能力。未开启或未授权时会降级为零辅助功能权限行为：Terminal 后台提醒、Terminal 前台抑制。
 
 **限制：** 按 Esc「中断」时 Claude Code 不触发任何 hook，因此无法检测中断；本功能不处理输入空闲（idle）。自动合并会规整 settings.json 的格式与键序（已备份）。
 
@@ -108,11 +122,14 @@ GitHub Actions 会在面向 `main` 的 PR 和 `main` 更新时，构建应用、
 | 声音 | 提醒时播放音效 | 开 |
 | 冷却时间 | 两次提醒最短间隔 | 10 秒 |
 | 免打扰 | 在指定时段暂停提醒 | 关 |
-| 跳转来源应用 | 关闭提醒后切换到 Terminal / Codex；Claude 多窗口事件优先跳到来源窗口 | 关 |
+| 点击猫咪打开来源 | 开启后点击猫咪会切换到 Terminal / Codex；「关闭」和「稍后」始终不切换应用 | 关 |
 
 ## 更新日志
 
 ### Unreleased
+- 设置、提醒历史和自检改用原生可缩放窗口；macOS 26 支持 Liquid Glass，旧版系统使用原生材质回退。
+- 提醒改为不主动抢占键盘焦点的紧凑面板，新增独立的「关闭」「稍后」和「打开来源」操作，并适配系统辅助功能显示设置。
+- 提醒历史新增搜索、日期分组、复制消息和按来源打开 Terminal / Codex。
 - 修复混合 hook 分组的清理逻辑，安装、更新和卸载时保留同组的用户 hook 与分组设置。
 - 修复免打扰、专注模式或关闭提醒拦截显示后状态机卡住的问题；被拦截的提醒保留为待处理记录。
 - Claude/Codex hook 提醒按接收顺序排队，当前提醒展示及进出动画期间的新事件不再丢失或覆盖当前提醒；收起后按冷却时间依次处理。
@@ -144,7 +161,7 @@ GitHub Actions 会在面向 `main` 的 PR 和 `main` 更新时，构建应用、
 
 ## 技术栈
 
-Swift + AppKit（主应用）+ SwiftUI（设置窗口），不依赖任何第三方框架。
+Swift + AppKit + SwiftUI，不依赖任何第三方框架。
 
 ## 文档
 
@@ -158,31 +175,3 @@ MIT License
 ## 致谢
 
 灵感来自各种编程 IDE 里的宠物陪伴插件，以及总是被码头红点忽略掉的开发者们。
-
-### Modern macOS local preview
-
-The interface uses native sidebars, grouped forms and toolbars. macOS 26 adds
-Liquid Glass; macOS 13–15 use standard controls and materials. Build with a
-macOS 26 SDK or newer (for example, Xcode 26).
-
-Incoming reminders appear in a compact, nonactivating panel. **Close** and
-**Later** never switch applications; **Open source** does. The existing
-`switchToTerminal` preference now applies only to clicking the cat. Escape
-closes a reminder when its panel has keyboard focus; it does not intercept
-Escape in another app. Reduced Motion replaces travel with fades, and Reduced
-Transparency uses an opaque surface.
-
-To build an Apple silicon DMG for local review without installing or publishing:
-
-```bash
-bash package-dmg.sh
-```
-
-The DMG and SHA-256 checksum are written to `build/`. Packaging defaults to
-ad-hoc signing and does not notarize the app. Set `SIGN_IDENTITY` explicitly
-if you have a signing identity. The build script's normal signing default is
-unchanged.
-
-Run `bash test.sh` for headless regressions. In a macOS GUI session, run
-`TN_RUN_UI_TESTS=1 bash test.sh` to also check window resizing, bubble control
-layout, nonactivating panel focus and reduced-motion animation completion.
