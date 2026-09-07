@@ -2,6 +2,7 @@ import Foundation
 
 enum PreviewMode: String {
     case settings
+    case about
     case history
     case overlay
     case all

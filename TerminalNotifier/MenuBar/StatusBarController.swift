@@ -6,6 +6,7 @@ class StatusBarController {
     private var isPaused: Bool = false
 
     var onSettingsClicked: (() -> Void)?
+    var onAboutClicked: (() -> Void)?
     var onPauseToggled: ((Bool) -> Void)?
     var onHistoryClicked: (() -> Void)?
     var onSelfCheckClicked: (() -> Void)?
@@ -51,6 +52,17 @@ class StatusBarController {
         let appItem = NSMenuItem(title: "Terminal Notifier", action: nil, keyEquivalent: "")
         appItem.isEnabled = false
         menu.addItem(appItem)
+
+        let aboutItem = NSMenuItem(
+            title: menuLang("About Terminal Notifier", zh: "关于 Terminal Notifier"),
+            action: #selector(aboutAction),
+            keyEquivalent: ""
+        )
+        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
+        aboutItem.target = self
+        menu.addItem(aboutItem)
+
+        menu.addItem(.separator())
 
         menu.addItem(sectionHeader(menuLang("Status", zh: "状态")))
 
@@ -193,6 +205,7 @@ class StatusBarController {
     }
 
     @objc private func settingsAction() { onSettingsClicked?() }
+    @objc private func aboutAction() { onAboutClicked?() }
     @objc private func pauseAction() {
         isPaused.toggle()
         updatePauseMenuItem(isPaused: isPaused)

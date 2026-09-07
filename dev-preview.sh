@@ -4,14 +4,14 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODE="${1:-settings}"
 SETTINGS_VISUAL_MODE="${2:-}"
-APP_BUNDLE="$PROJECT_DIR/build/TerminalNotifier.app"
+APP_BUNDLE="$PROJECT_DIR/build/Terminal Notifier.app"
 APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/TerminalNotifier"
 LOG_FILE="/tmp/terminal-notifier-preview.log"
 
 case "$MODE" in
-    settings|history|overlay|all) ;;
+    settings|about|history|overlay|all) ;;
     *)
-        echo "Usage: $0 [settings|history|overlay|all]" >&2
+        echo "Usage: $0 [settings|about|history|overlay|all]" >&2
         exit 64
         ;;
 esac
@@ -19,7 +19,7 @@ esac
 case "$SETTINGS_VISUAL_MODE" in
     ""|modern|compatible) ;;
     *)
-        echo "Usage: $0 [settings|history|overlay|all] [modern|compatible]" >&2
+        echo "Usage: $0 [settings|about|history|overlay|all] [modern|compatible]" >&2
         exit 64
         ;;
 esac

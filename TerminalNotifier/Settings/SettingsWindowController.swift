@@ -4,15 +4,20 @@ import SwiftUI
 class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let visualMode: SettingsVisualMode
+    private let navigation = SettingsNavigation()
     var onPreview: () -> Void = {}
     var onSelfCheck: () -> Void = {}
 
     init(visualMode: SettingsVisualMode = .current) {
         self.visualMode = visualMode
         super.init()
+        navigation.onSelectionChanged = { [weak self] in
+            self?.scheduleScrollViewStyling()
+        }
     }
 
-    func showSettings(preferences: PreferencesManager) {
+    func showSettings(preferences: PreferencesManager, selecting section: SettingsSection? = nil) {
+        if let section { navigation.selection = section }
         if let existing = window {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -20,6 +25,7 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
         }
 
         let settingsView = SettingsView(preferences: preferences,
+                                        navigation: navigation,
                                         visualMode: visualMode,
                                         onPreview: onPreview,
                                         onSelfCheck: onSelfCheck)
@@ -50,6 +56,31 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
 
         self.window = win
         alignWindowControlsWithSidebar(in: win)
+        scheduleScrollViewStyling()
+    }
+
+    private func scheduleScrollViewStyling() {
+        // SwiftUI may replace the Form's backing NSScrollView after a sidebar
+        // selection. Apply once per layout phase so the native overlay style
+        // reaches the actual AppKit scroll view rather than a SwiftUI wrapper.
+        for delay in [0.0, 0.05, 0.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let contentView = self?.window?.contentView else { return }
+                self?.styleScrollViews(in: contentView)
+            }
+        }
+    }
+
+    private func styleScrollViews(in view: NSView) {
+        if let scrollView = view as? NSScrollView {
+            scrollView.scrollerStyle = .overlay
+            scrollView.autohidesScrollers = true
+            scrollView.verticalScroller?.controlSize = .regular
+            scrollView.horizontalScroller?.controlSize = .regular
+        }
+        for subview in view.subviews {
+            styleScrollViews(in: subview)
+        }
     }
 
     private func alignWindowControlsWithSidebar(in window: NSWindow) {
@@ -70,6 +101,7 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         alignWindowControlsWithSidebar(in: window)
+        scheduleScrollViewStyling()
     }
 
     func windowWillClose(_ notification: Notification) {

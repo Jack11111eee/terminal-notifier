@@ -91,6 +91,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.settingsController.showSettings(preferences: self.preferences)
         }
+        statusBarController.onAboutClicked = { [weak self] in
+            guard let self else { return }
+            self.settingsController.showSettings(preferences: self.preferences, selecting: .about)
+        }
         statusBarController.onPauseToggled = { [weak self] paused in
             if paused {
                 self?.contentMonitor.stopMonitoring()
@@ -409,6 +413,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch mode {
         case .settings:
             settingsController.showSettings(preferences: preferences)
+        case .about:
+            settingsController.showSettings(preferences: preferences, selecting: .about)
         case .history:
             historyController.showHistory(historyManager: historyManager)
         case .overlay:

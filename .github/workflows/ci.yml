@@ -33,7 +33,7 @@ jobs:
         run: bash build.sh
 
       - name: Verify app bundle
-        run: codesign --verify --deep --strict build/TerminalNotifier.app
+        run: codesign --verify --deep --strict "build/Terminal Notifier.app"
 
       - name: Run regression tests
         run: bash test.sh

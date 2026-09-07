@@ -2,16 +2,17 @@
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_NAME="TerminalNotifier"
+EXECUTABLE_NAME="TerminalNotifier"
+APP_BUNDLE_NAME="Terminal Notifier"
 BUILD_DIR="$PROJECT_DIR/build"
-APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
+APP_BUNDLE="$BUILD_DIR/$APP_BUNDLE_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
 SIGN_IDENTITY="${SIGN_IDENTITY:-TerminalNotifierDev}"
 INSTALL="${INSTALL:-0}"
 
-echo "=== Building $APP_NAME ==="
+echo "=== Building $APP_BUNDLE_NAME ==="
 echo "Target: arm64-apple-macosx13.0"
 echo "Signing identity: $SIGN_IDENTITY"
 echo "Install to /Applications: $INSTALL"
@@ -27,7 +28,7 @@ done < <(find "$PROJECT_DIR/TerminalNotifier" -name "*.swift" -print0)
 
 echo "Compiling Swift sources..."
 swiftc \
-    -o "$MACOS_DIR/$APP_NAME" \
+    -o "$MACOS_DIR/$EXECUTABLE_NAME" \
     -framework AppKit \
     -framework SwiftUI \
     -framework ServiceManagement \
@@ -47,15 +48,15 @@ codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 
 if [[ "$INSTALL" == "1" ]]; then
     echo "Copying to /Applications..."
-    rm -rf "/Applications/$APP_NAME.app"
-    ditto "$APP_BUNDLE" "/Applications/$APP_NAME.app"
+    rm -rf "/Applications/$APP_BUNDLE_NAME.app"
+    ditto "$APP_BUNDLE" "/Applications/$APP_BUNDLE_NAME.app"
 fi
 
 echo ""
 echo "=== Build complete ==="
 echo "App bundle: $APP_BUNDLE"
 if [[ "$INSTALL" == "1" ]]; then
-    echo "Installed:  /Applications/$APP_NAME.app"
+    echo "Installed:  /Applications/$APP_BUNDLE_NAME.app"
 fi
 echo ""
 echo "To run: open \"$APP_BUNDLE\""
