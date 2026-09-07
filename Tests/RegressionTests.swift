@@ -88,6 +88,58 @@ final class HookManagerTests: XCTestCase {
         XCTAssertEqual(try encoded(read(url)), try encoded(expected))
     }
 
+    /// 新 tty 探测（进程树上行）装进 hook 命令后，marker 的 tty 字段应能取到
+    /// 当前测试进程链上有 controlling tty 的祖先（xctest 由终端或 CI shell 启动，
+    /// 链上必有 tty；Mock 无 ctty 场景由 shell 逻辑自身保证）。
+    func testClaudeHookCommandProducesTTYFromProcessAncestry() throws {
+        let markerDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("terminal-notifier-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: markerDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: markerDir) }
+
+        // 从 command(for:) 提取探测逻辑：直接执行 install 产出的命令不可行（写 ~/.claude），
+        // 因此在临时目录里复刻同一段 shell 并运行，验证「无 ctty 子进程沿 ppid 链拿到 tty」。
+        let script = """
+        rel='\(markerDir.path)'; dir="$rel"; mkdir -p "$dir"; \
+        tty_name="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ')"; \
+        if [ -z "$tty_name" ] || [ "$tty_name" = "??" ]; then tty_name="$(tty 2>/dev/null | sed 's#^/dev/##')"; fi; \
+        if [ -z "$tty_name" ] || [ "$tty_name" = "not a tty" ]; then tty_name="$(lsof -p $$ -a -Fn -d 0,1,2 2>/dev/null | grep -m1 '^n/dev/tty' | sed 's#^n/dev/##')"; fi; \
+        if [ -z "$tty_name" ] || [ "$tty_name" = "??" ] || [ "$tty_name" = "not a tty" ]; then \
+            _p=$$; _i=0; _tty=""; \
+            while [ "$_i" -lt 20 ]; do \
+                _p="$(ps -o ppid= -p "$_p" 2>/dev/null | tr -d ' ')"; \
+                if [ -z "$_p" ] || [ "$_p" -le 1 ]; then break; fi; \
+                _tty="$(ps -o tty= -p "$_p" 2>/dev/null | tr -d ' ')"; \
+                if [ -n "$_tty" ] && [ "$_tty" != "??" ]; then tty_name="$_tty"; break; fi; \
+                _i=$((_i+1)); \
+            done; \
+        fi; \
+        file="$(mktemp "$dir/done.XXXXXX")" || exit 0; \
+        printf '{"event":"%s","source":"claude","tty":"%s","timestamp":%s}\\n' 'done' "$tty_name" "$(date +%s)" > "$file"; \
+        echo "$file"
+        """
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+        proc.arguments = ["-c", script]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        try proc.run()
+        proc.waitUntilExit()
+
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        XCTAssertFalse(output.isEmpty, "hook shell 应产出 marker 文件路径")
+        let markerURL = URL(fileURLWithPath: output)
+        let data = try Data(contentsOf: markerURL)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let tty = try XCTUnwrap(json["tty"] as? String)
+        // 测试进程链上必有 tty（xctest 的父进程是 shell/CI）；CI 的容器里可能是其他形式，
+        // 只要求非空且不是三级兜底的失败占位值。
+        XCTAssertFalse(tty.isEmpty)
+        XCTAssertNotEqual(tty, "??")
+        XCTAssertNotEqual(tty, "not a tty")
+    }
+
 }
 
 private final class RecordingDelegate: NotificationStateMachineDelegate {
