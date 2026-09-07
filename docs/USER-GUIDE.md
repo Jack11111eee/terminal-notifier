@@ -6,7 +6,7 @@
 
 ### 1. 启动
 
-从 Applications 双击 `TerminalNotifier.app`，菜单栏会出现一只像素猫图标。没有窗口，没有 Dock 图标——它在后台默默守护。
+从 Applications 双击 `Terminal Notifier.app`，菜单栏会出现一只像素猫图标。没有窗口，没有 Dock 图标——它在后台默默守护。
 
 ### 2. 触发
 
@@ -137,7 +137,7 @@ Claude Code 是由 GUI 进程启动的，hook 子进程通常**没有 controllin
 ### Q: macOS 弹出"无法验证开发者"？
 
 因为应用是通过 GitHub Release 分发的（非 App Store），首次打开时需要：
-1. 右键点击 `TerminalNotifier.app`
+1. 右键点击 `Terminal Notifier.app`
 2. 选择"打开"
 3. 在弹窗中点"打开"
 

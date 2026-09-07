@@ -20,7 +20,7 @@ Terminal Notifier 默认检测 Terminal.app 的 Dock 红点（badge），也可�
 
 ### 直接下载
 
-从 [GitHub Releases](https://github.com/Jack11111eee/terminal-notifier/releases) 下载最新的 `.zip` 文件，解压后将 `TerminalNotifier.app` 拖到 `Applications` 文件夹即可。
+从 [GitHub Releases](https://github.com/Jack11111eee/terminal-notifier/releases) 下载最新的 `.zip` 文件，解压后将 `Terminal Notifier.app` 拖到 `Applications` 文件夹即可。
 
 ### 从源码编译
 
@@ -34,7 +34,7 @@ Terminal Notifier 默认检测 Terminal.app 的 Dock 红点（badge），也可�
 git clone https://github.com/Jack11111eee/terminal-notifier.git
 cd terminal-notifier
 ./build.sh
-open build/TerminalNotifier.app
+open "build/Terminal Notifier.app"
 ```
 
 如需构建后复制到 `/Applications`：

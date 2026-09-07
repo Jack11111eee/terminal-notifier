@@ -742,7 +742,7 @@ func setLaunchAtLogin(_ enabled: Bool) {
 ```
 
 **GitHub Release 产物：**
-- `TerminalNotifier.app`（签名 .app bundle）
+- `Terminal Notifier.app`（签名 .app bundle）
 - `TerminalNotifier.zip`（压缩包）
 - `TerminalNotifier.dmg`（可选）
 
