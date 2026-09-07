@@ -7,11 +7,11 @@ enum SettingsLayout {
 
 struct SettingsView: View {
     @ObservedObject var preferences: PreferencesManager
+    @ObservedObject var navigation: SettingsNavigation
     let visualMode: SettingsVisualMode
     var onPreview: () -> Void = {}
     var onSelfCheck: () -> Void = {}
     @AppStorage("language") private var language = "system"
-    @State private var selection: SettingsSection? = .general
     private var locale: String { PreferencesManager.resolveLocale(language) }
     private func text(_ en: String, _ zh: String) -> String { locale == "zh" ? zh : en }
 
@@ -20,18 +20,19 @@ struct SettingsView: View {
             sidebar
 
             VStack(spacing: 0) {
-                Text((selection ?? .general).title(locale))
+                Text(navigation.selection.title(locale))
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .frame(height: 48)
                 Form {
-                    switch selection ?? .general {
+                    switch navigation.selection {
                     case .general: general
                     case .integrations: integrations
                     case .notifications: notifications
                     case .appearance: appearance
+                    case .about: about
                     }
                 }
                 .formStyle(.grouped)
@@ -71,8 +72,12 @@ struct SettingsView: View {
                 .font(.system(size: 20, weight: .semibold))
                 .padding(.horizontal, 16)
                 .padding(.top, 44)
-            List(SettingsSection.allCases, selection: $selection) { section in
-                Label(section.title(locale), systemImage: section.symbol).tag(section)
+            List(selection: $navigation.selection) {
+                ForEach(SettingsSection.primaryCases) { section in
+                    Label(section.title(locale), systemImage: section.symbol).tag(section)
+                }
+                Label(SettingsSection.about.title(locale), systemImage: SettingsSection.about.symbol)
+                    .tag(SettingsSection.about)
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
@@ -237,6 +242,123 @@ struct SettingsView: View {
         }
     }
 
+    private var about: some View {
+        Group {
+            Section {
+                VStack(spacing: 10) {
+                    if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "png"),
+                       let icon = NSImage(contentsOf: url) {
+                        Image(nsImage: icon)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 88, height: 88)
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .accessibilityHidden(true)
+                    }
+                    Text("Terminal Notifier")
+                        .font(.system(size: 24, weight: .semibold))
+                    Text(versionText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text(text("A pixel cat that lives in your menu bar and calls you back when your terminal needs you.",
+                              "一只住在菜单栏、在终端需要你时叫你的像素猫。"))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 430)
+                }
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+            }
+
+            Section(text("Privacy", "隐私")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    compactLabel(text("Local by design", "本地运行，尊重隐私"), symbol: "lock.shield")
+                        .font(.headline)
+                    Text(text("No account, analytics, or telemetry. Reminder history and integration events stay on your Mac.",
+                              "不需要账户，不包含分析或遥测。通知历史和集成事件仅保存在你的 Mac 上。"))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(text("Optional Claude Code and Codex integrations install managed local hooks that can be removed by turning the integration off.",
+                              "可选的 Claude Code 与 Codex 集成会安装受管理的本地 hooks；关闭对应集成即可移除。"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section(text("Contributors", "贡献者")) {
+                HStack(spacing: 10) {
+                    contributorLink("Jack11111eee", url: "https://github.com/Jack11111eee")
+                    contributorLink("GeniusLv2006", url: "https://github.com/GeniusLv2006")
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 2)
+            }
+
+            Section(text("Project", "项目")) {
+                HStack(spacing: 10) {
+                    projectLink(text("Project Home", "项目主页"), symbol: "chevron.left.forwardslash.chevron.right",
+                                url: "https://github.com/Jack11111eee/terminal-notifier")
+                    projectLink(text("Releases", "查看新版本"), symbol: "arrow.down.circle",
+                                url: "https://github.com/Jack11111eee/terminal-notifier/releases")
+                    projectLink(text("Report an Issue", "反馈问题"), symbol: "exclamationmark.bubble",
+                                url: "https://github.com/Jack11111eee/terminal-notifier/issues")
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 5) {
+                    Link(destination: URL(string: "https://github.com/Jack11111eee/terminal-notifier/blob/main/LICENSE")!) {
+                        compactLabel("MIT License", symbol: "doc.text")
+                    }
+                    Text("Copyright © 2026 Terminal Notifier Contributors")
+                        .foregroundStyle(.secondary)
+                    Text(text("The cat isn’t rushing you. It just thinks that terminal window looks lonely.",
+                              "猫不会催你，它只是觉得那个终端窗口可能有点孤单。"))
+                        .foregroundStyle(.tertiary)
+                        .italic()
+                }
+                .font(.caption)
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private var versionText: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String ?? "—"
+        return text("Version \(version) (Build \(build))", "版本 \(version)（Build \(build)）")
+    }
+
+    private func contributorLink(_ name: String, url: String) -> some View {
+        Link(destination: URL(string: url)!) {
+            compactLabel(name, symbol: "person.crop.circle")
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .background(.quaternary, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func projectLink(_ title: String, symbol: String, url: String) -> some View {
+        Link(destination: URL(string: url)!) {
+            compactLabel(title, symbol: symbol)
+        }
+        .tnGlassButtonIfAvailable()
+    }
+
+    private func compactLabel(_ title: String, symbol: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+            Text(title)
+        }
+    }
+
     private func settingToggle(_ title: String, _ subtitle: String, _ binding: Binding<Bool>) -> some View {
         Toggle(isOn: binding) {
             VStack(alignment: .leading, spacing: 4) {
@@ -259,8 +381,16 @@ struct SettingsView: View {
     }
 }
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, integrations, notifications, appearance
+final class SettingsNavigation: ObservableObject {
+    @Published var selection: SettingsSection = .general {
+        didSet { onSelectionChanged?() }
+    }
+    var onSelectionChanged: (() -> Void)?
+}
+
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general, integrations, notifications, appearance, about
+    static let primaryCases: [SettingsSection] = [.general, .integrations, .notifications, .appearance]
     var id: String { rawValue }
     var symbol: String {
         switch self {
@@ -268,6 +398,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .integrations: return "puzzlepiece.extension"
         case .notifications: return "bell.badge"
         case .appearance: return "paintpalette"
+        case .about: return "info.circle"
         }
     }
     func title(_ locale: String) -> String {
@@ -276,6 +407,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .integrations: return locale == "zh" ? "集成" : "Integrations"
         case .notifications: return locale == "zh" ? "通知" : "Notifications"
         case .appearance: return locale == "zh" ? "外观" : "Appearance"
+        case .about: return locale == "zh" ? "关于" : "About"
         }
     }
 }
