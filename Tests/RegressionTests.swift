@@ -261,12 +261,45 @@ final class NotificationStateMachineTests: XCTestCase {
 
 }
 
+final class SettingsVisualModeTests: XCTestCase {
+    func testExplicitSettingsVisualModeOverridesAutomaticSelection() {
+        XCTAssertEqual(SettingsVisualMode.resolved(
+            arguments: ["TerminalNotifier", "--settings-visual-mode", "modern"],
+            environment: [:]), .modern)
+        XCTAssertEqual(SettingsVisualMode.resolved(
+            arguments: ["TerminalNotifier"],
+            environment: ["TERMINAL_NOTIFIER_SETTINGS_VISUAL_MODE": "compatible"]), .compatible)
+    }
+
+    func testInvalidSettingsVisualModeFallsBackToSupportedAutomaticMode() {
+        let mode = SettingsVisualMode.resolved(
+            arguments: ["TerminalNotifier", "--settings-visual-mode", "invalid"],
+            environment: ["TERMINAL_NOTIFIER_SETTINGS_VISUAL_MODE": "invalid"])
+        XCTAssertTrue(SettingsVisualMode.allCases.contains(mode))
+    }
+
+    func testModernAndCompatibleModesUseDistinctChromePolicies() {
+        XCTAssertTrue(SettingsVisualMode.modern.usesInsetGlassSidebar)
+        XCTAssertTrue(SettingsVisualMode.modern.repositionsWindowControls)
+        XCTAssertFalse(SettingsVisualMode.compatible.usesInsetGlassSidebar)
+        XCTAssertFalse(SettingsVisualMode.compatible.repositionsWindowControls)
+    }
+}
+
 /// Opt-in window tests require a GUI session; ordinary regressions remain headless.
 final class WindowLayoutTests: XCTestCase {
     private func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
 
-    func testSettingsAndHistoryResizeWithWindow() {
-        let settings = SettingsWindowController()
+    private func requireScreen() throws -> NSScreen {
+        guard let screen = NSScreen.main else {
+            throw XCTSkip("Window layout tests require a logged-in macOS graphical session")
+        }
+        return screen
+    }
+
+    func testSettingsAndHistoryResizeWithWindow() throws {
+        _ = try requireScreen()
+        let settings = SettingsWindowController(visualMode: .modern)
         settings.showSettings(preferences: .shared)
         let history = HistoryWindowController()
         history.showHistory(historyManager: NotificationHistoryManager(storageKey: "tn-layout-test-unused"))
@@ -285,6 +318,8 @@ final class WindowLayoutTests: XCTestCase {
             settle()
             XCTAssertEqual(window.contentView?.bounds.width ?? 0, window.contentMinSize.width, accuracy: 1)
             if window.titleVisibility == .hidden {
+                XCTAssertTrue(window.styleMask.contains(.fullSizeContentView),
+                              "The settings sidebar should extend through the titlebar")
                 for (index, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
                     let button = window.standardWindowButton(kind)!
                     let rect = button.convert(button.bounds, to: nil)
@@ -330,7 +365,7 @@ final class WindowLayoutTests: XCTestCase {
     }
 
     func testIncomingOverlayDoesNotBecomeKeyAndExplicitFocusWorks() throws {
-        let screen = try XCTUnwrap(NSScreen.main)
+        let screen = try requireScreen()
         let overlay = OverlayWindowController()
         defer { overlay.forceClose() }
         overlay.show(on: screen, message: "这是一条示例提醒。准备好后，回到你的工作。")
@@ -380,6 +415,7 @@ enum RegressionTests {
         let suite = XCTestSuite(name: "Terminal Notifier regressions")
         suite.addTest(HookManagerTests.defaultTestSuite)
         suite.addTest(NotificationStateMachineTests.defaultTestSuite)
+        suite.addTest(SettingsVisualModeTests.defaultTestSuite)
         if ProcessInfo.processInfo.environment["TN_RUN_UI_TESTS"] == "1" {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.accessory)

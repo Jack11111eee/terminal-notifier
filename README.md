@@ -59,6 +59,8 @@ DMG 和 SHA-256 校验文件会写入 `build/`。脚本默认使用 ad-hoc 签�
 
 在 macOS 图形会话中，可运行 `TN_RUN_UI_TESTS=1 bash test.sh`，额外检查窗口缩放、长消息按钮布局、提醒面板焦点和减少动态效果下的动画完成行为。
 
+设置窗口会在 macOS 26 与 Swift 6.2 及以上的构建中使用现代 Liquid Glass 布局，其他环境使用传统原生材质布局。开发时可分别运行 `bash dev-preview.sh settings modern` 和 `bash dev-preview.sh settings compatible` 在同一台 Mac 上预览两种模式。
+
 GitHub Actions 会在面向 `main` 的 PR 和 `main` 更新时，构建应用、校验 ad-hoc 签名并运行这些回归测试。CI 不安装应用、不使用正式签名证书，也不自动发布安装包。
 
 ## 功能

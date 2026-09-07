@@ -10,7 +10,7 @@ bash "$PROJECT_DIR/build.sh"
 
 APP_BUNDLE="$PROJECT_DIR/build/TerminalNotifier.app"
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_BUNDLE/Contents/Info.plist")
-DMG_PATH="$PROJECT_DIR/build/TerminalNotifier-${VERSION}-modern-r3-macos-arm64.dmg"
+DMG_PATH="$PROJECT_DIR/build/TerminalNotifier-${VERSION}-modern-r6-macos-arm64.dmg"
 STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/terminal-notifier-dmg.XXXXXX")"
 trap 'rm -rf "$STAGING_DIR"' EXIT
 
@@ -31,10 +31,10 @@ Liquid Glass is available on macOS 26 and later; older systems use native materi
 需要 Apple 芯片 Mac，支持 macOS 13 及以上版本。
 macOS 26 使用 Liquid Glass，较旧系统使用原生材质。
 
-UI refinement build R3 / 界面优化第三版
+UI refinement build R6 / 界面优化第六版
 - Resizable settings, history and self-check windows / 可缩放窗口
-- Full-height glass sidebar and unified settings background / 贯通顶部的玻璃侧栏与统一设置背景
-- Balanced sidebar corners and a clean native titlebar / 协调的侧栏圆角与简洁的原生标题栏
+- Full-height native-style glass sidebar / 贯通标题栏的原生风格玻璃侧栏
+- Separate native material layout for compatibility mode / 兼容模式使用独立的原生材质布局
 - Centered history search and fewer separators / 居中历史搜索与减少分割线
 - Compact reminders that do not take keyboard focus / 不抢键盘焦点的紧凑提醒
 - Separate Close, Later and Open source actions / 独立的关闭、稍后、打开来源操作

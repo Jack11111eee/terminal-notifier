@@ -7,6 +7,7 @@ enum SettingsLayout {
 
 struct SettingsView: View {
     @ObservedObject var preferences: PreferencesManager
+    let visualMode: SettingsVisualMode
     var onPreview: () -> Void = {}
     var onSelfCheck: () -> Void = {}
     @AppStorage("language") private var language = "system"
@@ -16,26 +17,7 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Terminal Notifier")
-                    .font(.system(size: 20, weight: .semibold))
-                    .padding(.horizontal, 16)
-                    .padding(.top, 44)
-                List(SettingsSection.allCases, selection: $selection) { section in
-                    Label(section.title(locale), systemImage: section.symbol).tag(section)
-                }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
-                Label(text(preferences.enabled ? "Notifications enabled" : "Notifications disabled",
-                           preferences.enabled ? "提醒已启用" : "提醒已关闭"),
-                      systemImage: preferences.enabled ? "bell" : "bell.slash")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(16)
-            }
-            .frame(width: 206)
-            .frame(maxHeight: .infinity)
-            .tnGlassSurface(cornerRadius: SettingsLayout.sidebarCornerRadius)
-            .padding(SettingsLayout.sidebarInset)
+            sidebar
 
             VStack(spacing: 0) {
                 Text((selection ?? .general).title(locale))
@@ -62,6 +44,44 @@ struct SettingsView: View {
         .frame(minWidth: 620, minHeight: 440)
         .background(Color(nsColor: .windowBackgroundColor))
         .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var sidebar: some View {
+        if visualMode.usesInsetGlassSidebar {
+            sidebarContent
+                .frame(width: 206)
+                .frame(maxHeight: .infinity)
+                .tnGlassSurface(cornerRadius: SettingsLayout.sidebarCornerRadius)
+                .padding(SettingsLayout.sidebarInset)
+        } else {
+            HStack(spacing: 0) {
+                sidebarContent
+                    .frame(width: 221)
+                    .frame(maxHeight: .infinity)
+                    .background(.regularMaterial)
+                Divider()
+            }
+        }
+    }
+
+    private var sidebarContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Terminal Notifier")
+                .font(.system(size: 20, weight: .semibold))
+                .padding(.horizontal, 16)
+                .padding(.top, 44)
+            List(SettingsSection.allCases, selection: $selection) { section in
+                Label(section.title(locale), systemImage: section.symbol).tag(section)
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            Label(text(preferences.enabled ? "Notifications enabled" : "Notifications disabled",
+                       preferences.enabled ? "提醒已启用" : "提醒已关闭"),
+                  systemImage: preferences.enabled ? "bell" : "bell.slash")
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(16)
+        }
     }
 
     private var general: some View {
