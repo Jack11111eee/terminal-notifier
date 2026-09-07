@@ -23,6 +23,9 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
             onRecordTapped: onRecordTapped,
             refreshModel: refreshModel)
         let hostingController = NSHostingController(rootView: historyView)
+        // Keep SwiftUI's minimum-size protection without deriving a maximum
+        // window size from the current history content.
+        hostingController.sizingOptions = [.minSize]
 
         let win = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         win.title = PreferencesManager.shared.resolvedLocale == "zh" ? "提醒历史" : "Notification History"
