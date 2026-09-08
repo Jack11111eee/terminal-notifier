@@ -88,19 +88,24 @@ final class HookManagerTests: XCTestCase {
         XCTAssertEqual(try encoded(read(url)), try encoded(expected))
     }
 
-    /// 新 tty 探测（进程树上行）装进 hook 命令后，marker 的 tty 字段应能取到
-    /// 当前测试进程链上有 controlling tty 的祖先（xctest 由终端或 CI shell 启动，
-    /// 链上必有 tty；Mock 无 ctty 场景由 shell 逻辑自身保证）。
+    /// 新 tty 探测（进程树上行）的确定性回归。
+    ///
+    /// 编排出「真实 hook 子进程」的形态——无 controlling tty、stdio 全被重定向：
+    /// script 分配 pty（祖先有 ctty）→ perl fork 出的子进程 setsid 脱离 ctty
+    /// （必须先 fork：会话 leader 调 setsid 会 EPERM）并重定向 stdio，再 exec 探测 sh。
+    /// 此形态下探测的前三级（直接 ctty / tty 命令 / lsof fd）必然失败，唯一命中
+    /// 途径是第四级沿 ppid 链上溯——正是本特性要验证的行为。不依赖运行环境：
+    /// headless CI（xctest 全链无 ctty，旧断言「链上必有 tty」正是 CI 挂掉的原因）同样成立。
     func testClaudeHookCommandProducesTTYFromProcessAncestry() throws {
         let markerDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("terminal-notifier-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: markerDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: markerDir) }
 
-        // 从 command(for:) 提取探测逻辑：直接执行 install 产出的命令不可行（写 ~/.claude），
-        // 因此在临时目录里复刻同一段 shell 并运行，验证「无 ctty 子进程沿 ppid 链拿到 tty」。
+        // 探测段与 ClaudeHookManager.command(for:) 保持一致，唯 dir 改指临时目录
+        // （直接执行 install 产出的命令不可行：它写 ~/.claude 下的 marker）。
         let script = """
-        rel='\(markerDir.path)'; dir="$rel"; mkdir -p "$dir"; \
+        dir='\(markerDir.path)'; mkdir -p "$dir"; \
         tty_name="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ')"; \
         if [ -z "$tty_name" ] || [ "$tty_name" = "??" ]; then tty_name="$(tty 2>/dev/null | sed 's#^/dev/##')"; fi; \
         if [ -z "$tty_name" ] || [ "$tty_name" = "not a tty" ]; then tty_name="$(lsof -p $$ -a -Fn -d 0,1,2 2>/dev/null | grep -m1 '^n/dev/tty' | sed 's#^n/dev/##')"; fi; \
@@ -114,30 +119,58 @@ final class HookManagerTests: XCTestCase {
                 _i=$((_i+1)); \
             done; \
         fi; \
-        file="$(mktemp "$dir/done.XXXXXX")" || exit 0; \
-        printf '{"event":"%s","source":"claude","tty":"%s","timestamp":%s}\\n' 'done' "$tty_name" "$(date +%s)" > "$file"; \
-        echo "$file"
+        printf '{"event":"%s","source":"claude","tty":"%s","timestamp":%s}\\n' 'done' "$tty_name" "$(date +%s)" > "$dir/marker.json"
         """
+
+        // 探测脚本经环境变量传给 perl（避免多层引号转义）；子进程 exec 后其 ppid
+        // 即留在 pty 会话里的 perl 父进程——第四级一跳即可命中。perl 父进程再把
+        // 自身 ctty 落盘为期望值。
+        let orchestrator = """
+        my $kid = fork();
+        die "fork: $!" unless defined $kid;
+        if ($kid == 0) {
+            setsid() or die "setsid: $!";
+            open STDIN, "<", "/dev/null" or die $!;
+            open STDOUT, ">", "/dev/null" or die $!;
+            open STDERR, ">&STDOUT" or die $!;
+            exec "/bin/sh", "-c", $ENV{TN_PROBE_SCRIPT};
+            die "exec: $!";
+        }
+        waitpid($kid, 0);
+        chomp(my $tty = `ps -o tty= -p $$`);
+        open my $fh, ">", $ENV{TN_MARKER_DIR} . "/expected.txt" or die $!;
+        print $fh $tty;
+        close $fh;
+        """
+
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
-        proc.arguments = ["-c", script]
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        proc.arguments = ["-q", "/dev/null", "/usr/bin/perl", "-MPOSIX", "-e", orchestrator]
+        var environment = ProcessInfo.processInfo.environment
+        environment["TN_PROBE_SCRIPT"] = script
+        environment["TN_MARKER_DIR"] = markerDir.path
+        proc.environment = environment
         let pipe = Pipe()
         proc.standardOutput = pipe
+        proc.standardError = pipe
         try proc.run()
         proc.waitUntilExit()
 
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        XCTAssertFalse(output.isEmpty, "hook shell 应产出 marker 文件路径")
-        let markerURL = URL(fileURLWithPath: output)
-        let data = try Data(contentsOf: markerURL)
+        XCTAssertEqual(proc.terminationStatus, 0, "编排进程应正常退出（script/perl/sh 任一失败即测试失效）")
+        let data = try Data(contentsOf: markerDir.appendingPathComponent("marker.json"))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let tty = try XCTUnwrap(json["tty"] as? String)
-        // 测试进程链上必有 tty（xctest 的父进程是 shell/CI）；CI 的容器里可能是其他形式，
-        // 只要求非空且不是三级兜底的失败占位值。
+        // 前三级失败的占位值不应出现
         XCTAssertFalse(tty.isEmpty)
         XCTAssertNotEqual(tty, "??")
         XCTAssertNotEqual(tty, "not a tty")
+        // 关键断言：tty 应恰为 ppid 链上第一个有 ctty 的祖先（perl 父进程，即
+        // script 分配的 pty），证明它来自第四级进程树上行，而非其它路径的巧合。
+        let expected = try String(contentsOf: markerDir.appendingPathComponent("expected.txt"),
+                                  encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(expected.isEmpty, "perl 父进程应能拿到自身 ctty")
+        XCTAssertEqual(tty, expected)
     }
 
 }
