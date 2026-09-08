@@ -746,10 +746,8 @@ func setLaunchAtLogin(_ enabled: Bool) {
 - `Terminal-Notifier-<version>-macOS-arm64.dmg`
 
 **版本规则：**
-- `CFBundleShortVersionString` 使用 SemVer，表示用户可见版本；正式发布前在 `Info.plist` 中更新。
-- `CFBundleVersion` 是严格递增的整数构建号；每个正式发布包都不得复用旧值。
-- 版本提交必须先合入发布分支，再在该精确提交上创建 `v<CFBundleShortVersionString>` tag。
-- Release 产物只能从对应 tag 构建；打包前需验证 tag、`CFBundleShortVersionString` 和 DMG 文件名中的版本一致。
+- 日常开发和 PR 无需修改版本号。准备正式发布时，在 `Info.plist` 中更新遵循 SemVer 的 `CFBundleShortVersionString`，并将整数 `CFBundleVersion` 递增一次。
+- 创建 GitHub Release 前，确认版本 tag 指向包含上述版本信息的提交，并确认 tag、`CFBundleShortVersionString` 和 DMG 文件名中的版本一致。
 
 ---
 
