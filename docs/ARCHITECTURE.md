@@ -167,6 +167,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 **系统专注模式联动：** `showOverlay` 在现有 `enabled`/`isInDNDPeriod` 守卫上追加 `!isSystemFocusActive()`。系统 Focus 开启时提醒静默——事件仍进历史、菜单栏仍变红点，但不掉猫、不发声。拦截点在视觉/听觉出口，**不动状态机**。`isSystemFocusActive()` 优先读 `~/Library/DoNotDisturb/DB/Assertions.json`，失败回退 `plutil` 读 `com.apple.ncprefs.plist`，两条都失败返回 `false`（视为 Focus 关闭，绝不因检测失败静默提醒）。
 
+**输入保护（迷你猫）：** `TypingStateWatcher` 每 0.5s 用 `CGEventSource.secondsSinceLastEventType(.keyDown)`（只读查询，无需输入监控/辅助功能权限，读不到按键内容）判断「最近 3 秒内有按键」。两个接入点，**同样不动状态机**：① `showOverlay` 时正打字 → `overlayController.show(mini: true)`，右下角迷你猫、无气泡， AppDelegate 代发 `dropAnimationCompleted`（迷你无掉落动画）；② 挂屏期间开始打字（`.detected`/`.showing`）→ `shrinkToMiniIfNeeded` 重建为迷你（入场动画若被截断同样补发）。迷你猫点击 → `expandFromMini` 重建全尺寸。声音不受影响。`typingShrinkEnabled` 偏好默认开。
+
 ### 3.2 MenuBar / StatusBarController
 
 管理菜单栏图标和下拉菜单。

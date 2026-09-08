@@ -21,6 +21,8 @@ class PreferencesManager: ObservableObject {
     @AppStorage("autoDismissEnabled")   var autoDismissEnabled: Bool = true
     @AppStorage("autoDismissSeconds")   var autoDismissSeconds: Int = Constants.autoDismissSecondsDefault
     @AppStorage("snoozeMinutes")        var snoozeMinutes: Int = Constants.snoozeMinutesDefault
+    /// 输入保护：打字时新提醒弹迷你角落猫、挂着的全尺寸猫缩为迷你。
+    @AppStorage("typingShrinkEnabled")  var typingShrinkEnabled: Bool = true
 
     var isInDNDPeriod: Bool {
         guard dndEnabled else { return false }

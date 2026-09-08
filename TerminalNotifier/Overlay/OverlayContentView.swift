@@ -14,13 +14,14 @@ final class OverlayContentView: NSView {
         return NSSize(width: width, height: petSize + bubble.height + 80)
     }
 
-    init(frame: NSRect, petSize: CGFloat, message: String) {
+    init(frame: NSRect, petSize: CGFloat, message: String, mini: Bool = false) {
         self.petSize = petSize
+        self.mini = mini
         petView = PetSpriteView(frame: .zero)
         bubbleView = SpeechBubbleView(frame: .zero)
         super.init(frame: frame)
         addSubview(petView)
-        addSubview(bubbleView)
+        if !mini { addSubview(bubbleView) }
         bubbleView.text = message
         let zh = PreferencesManager.shared.resolvedLocale == "zh"
         petView.setAccessibilityElement(true)
@@ -29,14 +30,27 @@ final class OverlayContentView: NSView {
         petView.setAccessibilityHelp(PreferencesManager.shared.switchToTerminal
             ? (zh ? "打开来源应用" : "Open the source app")
             : (zh ? "关闭提醒" : "Close reminder"))
+        if mini {
+            petView.setAccessibilityHelp(zh ? "展开提醒" : "Expand reminder")
+        }
         petView.onPress = { [weak self] in self?.onTap?() }
         layoutViews()
     }
+
+    private let mini: Bool
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layout() { super.layout(); layoutViews() }
 
     private func layoutViews() {
+        if mini {
+            // 迷你形态：只有猫本体，占满整个视图（窗口即迷你尺寸）。
+            bubbleView.removeFromSuperview()
+            petView.frame = NSRect(x: (bounds.width - petSize) / 2,
+                                   y: (bounds.height - petSize) / 2,
+                                   width: petSize, height: petSize)
+            return
+        }
         let bubbleSize = SpeechBubbleView.preferredSize(for: bubbleView.text, width: bounds.width - 24)
         bubbleView.frame = NSRect(x: 12, y: 12, width: bubbleSize.width, height: bubbleSize.height)
         petView.frame = NSRect(x: (bounds.width - petSize) / 2,
@@ -44,6 +58,7 @@ final class OverlayContentView: NSView {
     }
 
     func updateMessage(_ message: String) {
+        guard !mini else { return }
         bubbleView.text = message
         layoutViews()
     }

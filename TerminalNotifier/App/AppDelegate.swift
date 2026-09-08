@@ -32,6 +32,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastCodexPermissionRequestEnabledValue: Bool = true
     private var currentOverlaySource: NotificationSource = .terminal
     private var currentOverlayTargetWindow: TerminalWindowInfo?
+    /// 输入状态观察：typingBegan 时把挂着的全尺寸猫缩为角落迷你猫（不遮输入者视线）。
+    private var typingWatcher = TypingStateWatcher()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let previewMode = PreviewMode.current {
@@ -74,6 +76,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         contentMonitor.delegate = self
         claudeMonitor.delegate = self
         codexMonitor.delegate = self
+        configureTypingWatcher()
 
         overlayController.onDismissRequested = { [weak self] in
             self?.stateMachine.handleEvent(.userDismissed)
@@ -104,10 +107,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // autoDismiss 定时器会在暂停期间继续走，恢复后立刻补弹过期提醒。
                 self?.stateMachine.reset()
                 self?.overlayController.forceClose()
+                self?.typingWatcher.stop()
             } else {
                 self?.contentMonitor.startMonitoring()
                 if self?.preferences.claudeCodeEnabled == true { self?.claudeMonitor.startMonitoring() }
                 if self?.preferences.codexAppEnabled == true { self?.codexMonitor.startMonitoring() }
+                // 暂停分支已 reset 状态机 + forceClose 猫；恢复时重启输入观察器，
+                // start() 会重取 wasTyping 初值，避免滞留旧值误触发 onTypingBegan。
+                self?.typingWatcher.start()
             }
         }
         statusBarController.onHistoryClicked = { [weak self] in self?.showHistory() }
@@ -171,6 +178,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         contentMonitor?.stopMonitoring()
         claudeMonitor?.stopMonitoring()
         codexMonitor?.stopMonitoring()
+        typingWatcher.stop()
         overlayController?.close()
         settingsPreviewController?.close()
     }
@@ -218,6 +226,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 输入保护：开始打字时把挂着的全尺寸猫缩为角落迷你猫。
+    /// 停止输入不反向操作迷你猫（用户点开时自然恢复全尺寸），见 PR 描述。
+    private func configureTypingWatcher() {
+        typingWatcher.onTypingBegan = { [weak self] in
+            guard let self else { return }
+            switch self.stateMachine.currentState {
+            case .detected, .showing:
+                self.overlayController.shrinkToMiniIfNeeded(force: false)
+                // 若猫还在入场动画中，dropAnimationCompleted 不会再到达，
+                // 代状态机补发，否则卡死 .detected 且 autoDismiss 计时不启动。
+                if case .detected = self.stateMachine.currentState {
+                    self.stateMachine.handleEvent(.dropAnimationCompleted)
+                }
+            default:
+                break
+            }
+        }
+        typingWatcher.start()
+    }
+
     private func showOverlay(
         message: String,
         category: MessageProvider.Category,
@@ -234,9 +262,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         currentOverlayTargetWindow = targetWindow
         let screen = targetWindow.map { TerminalWindowRegistry.screen(for: $0) }
             ?? TerminalScreenLocator.locateScreen(bundleIdentifier: source.bundleIdentifier ?? Constants.terminalBundleIdentifier)
-        tnLog("showOverlay: calling overlayController.show screen=\(screen)")
-        overlayController.show(on: screen, message: message, source: source, category: category)
+        // 输入保护：正在打字时不弹全尺寸猫（气泡+大猫占屏幕中央，遮挡输入视线），
+        // 改弹角落迷你猫，点迷你猫可展开。声音照常（不遮耳）。
+        let typingActive = preferences.typingShrinkEnabled && typingWatcher.isTypingNow
+        tnLog("showOverlay: calling overlayController.show screen=\(screen) typingShrink=\(typingActive)")
+        overlayController.show(
+            on: screen, message: message, source: source, category: category,
+            mini: typingActive)
         soundManager.playNotificationSound(for: category)
+        // 迷你形态无掉落动画，dropAnimationCompleted 不会自发到达，
+        // 代状态机补发（全尺寸路径由动画完成回调发出）。
+        if typingActive {
+            stateMachine.handleEvent(.dropAnimationCompleted)
+        }
         tnLog("showOverlay: done")
     }
 
@@ -437,7 +475,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             on: screen,
             message: preferences.resolvedLocale == "zh"
                 ? "这是一条示例提醒。你可以关闭、稍后处理，或打开来源。"
-                : "A sample reminder. Close it, remind me later, or open the source."
+                : "A sample reminder. Close it, remind me later, or open the source.",
+            mini: true
         )
         if ProcessInfo.processInfo.environment["TN_PREVIEW_FOCUS"] == "1" {
             overlayController.focusForInteraction()
