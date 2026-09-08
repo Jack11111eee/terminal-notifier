@@ -107,7 +107,7 @@ TerminalNotifier/
 - **hook → App 通道**：`ClaudeHookManager` 在 `~/.claude/settings.json` 注册两条 command hook——`Notification`（`matcher: permission_prompt`）和 `Stop`。hook 经 `/bin/sh` 用 `mktemp` 在 `~/Library/Application Support/TerminalNotifier/claude-events/` 投放 JSON 标记文件（macOS BSD `date` 无 `%N`，故用 mktemp 保唯一）。
 - **marker 格式**：`{"event":"needs_confirm|done","source":"claude","tty":"ttysXXX","timestamp":...}`。旧版空 marker 仍按文件名前缀兼容。
 - **消费**：`ClaudeCodeMonitor` 每秒轮询该目录，解析 JSON → `MessageProvider.Category` → 删除文件。Terminal 后台时直接回调 delegate；Terminal 前台时默认继续抑制。
-- **窗口归因**：`PreferencesManager.claudeWindowAttributionEnabled`（默认关）单独控制前台多窗口归因。开启后，`TerminalWindowRegistry` 用 `CGWindowListCopyWindowInfo` 获取可见 Terminal 窗口前后顺序，用 Terminal AppleScript、窗口标题和 AX 树把 marker 的 TTY 映射到 `TerminalWindowInfo`。归因失败时在 Terminal 前台继续抑制，避免误弹。
+- **窗口归因**：`PreferencesManager.claudeWindowAttributionEnabled`（默认关）单独控制前台多窗口归因。关闭时接收 hook 事件不调用 `TerminalWindowRegistry`，也不运行 Terminal AppleScript；marker 的 TTY 仍写入历史，只在用户主动打开来源时才尝试定位。开启后，`TerminalWindowRegistry` 用 `CGWindowListCopyWindowInfo` 获取可见 Terminal 窗口前后顺序，用 Terminal AppleScript、窗口标题和 AX 树把 marker 的 TTY 映射到 `TerminalWindowInfo`。归因失败时在 Terminal 前台继续抑制，避免误弹。
 - **安全合并**：`install()/uninstall()` 用 `JSONSerialization` 只增删带 `# terminal-notifier-hook` 标记的 entry，幂等，写前时间戳备份。**权衡**：重写会规整文件格式/键序。
 - **状态机**：新增 `.agentTrigger(AgentNotificationEvent)`，复用现有掉落/气泡/跳回/冷却；hook 提醒携带 `NotificationSource` 与可选目标窗口，不参与「N 条」合并，也不做 2 分钟 longWait 升级。
 - **开关**：`PreferencesManager.claudeCodeEnabled`（默认关）触发 install/uninstall + 启停监控，启动时若开启则幂等自愈；`claudeWindowAttributionEnabled`（默认关）只控制前台窗口归因和权限请求。
@@ -290,7 +290,7 @@ enum TerminalWindowRegistry {
 **实现：**
 - `orderedWindows()` 用 `CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements])` 读取 layer 0 的可见 Terminal 窗口，返回顺序即窗口上下关系，第一项视为最上层 Terminal 窗口。
 - `window(forTTY:)` 先用 Terminal AppleScript 读取可见窗口所有 tabs 的 `tty`、窗口标题和 bounds，再用标题/bounds 与 CGWindow 结果匹配；失败时回退窗口标题包含 TTY、AX 树文本包含 TTY。
-- `activate(_:)` 先激活 Terminal 进程，再对匹配 AX window 执行 `kAXRaiseAction`。没有目标窗口时只激活 Terminal.app。
+- `activate(_:)` 优先通过 Terminal AppleScript 将目标窗口的 index 设为 1，再激活 Terminal 进程；AppleScript 失败时回退为激活进程并执行 `kAXRaiseAction`。没有目标窗口时只激活 Terminal.app。
 
 ### 3.7 Notification / NotificationStateMachine
 
@@ -743,8 +743,11 @@ func setLaunchAtLogin(_ enabled: Bool) {
 
 **GitHub Release 产物：**
 - `Terminal Notifier.app`（签名 .app bundle）
-- `TerminalNotifier.zip`（压缩包）
-- `TerminalNotifier.dmg`（可选）
+- `Terminal-Notifier-<version>-macOS-arm64.dmg`
+
+**版本规则：**
+- 日常开发和 PR 无需修改版本号。准备正式发布时，在 `Info.plist` 中更新遵循 SemVer 的 `CFBundleShortVersionString`，并将整数 `CFBundleVersion` 递增一次。
+- 创建 GitHub Release 前，确认版本 tag 指向包含上述版本信息的提交，并确认 tag、`CFBundleShortVersionString` 和 DMG 文件名中的版本一致。
 
 ---
 

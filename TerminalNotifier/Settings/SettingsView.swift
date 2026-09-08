@@ -11,7 +11,10 @@ struct SettingsView: View {
     let visualMode: SettingsVisualMode
     var onPreview: () -> Void = {}
     var onSelfCheck: () -> Void = {}
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("language") private var language = "system"
+    @State private var claudeDetailsExpanded = false
+    @State private var codexDetailsExpanded = false
     private var locale: String { PreferencesManager.resolveLocale(language) }
     private func text(_ en: String, _ zh: String) -> String { locale == "zh" ? zh : en }
 
@@ -128,7 +131,10 @@ struct SettingsView: View {
                                   text("Match reminders to a Terminal window. Requires Accessibility permission and may request Terminal automation.", "将提醒关联到 Terminal 窗口。需要辅助功能权限，也可能请求 Terminal 自动化权限。"),
                                   $preferences.claudeWindowAttributionEnabled)
                         .disabled(!preferences.claudeCodeEnabled)
-                    DisclosureGroup(text("Integration details", "集成详情")) {
+                    detailsDisclosure(
+                        text("Integration details", "集成详情"),
+                        isExpanded: $claudeDetailsExpanded
+                    ) {
                         Text(text("Managed hooks are written to ~/.claude/settings.json. Background reminders do not require Accessibility permission.", "受管理的 hooks 写入 ~/.claude/settings.json。后台提醒不需要辅助功能权限。"))
                             .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     }
@@ -143,7 +149,10 @@ struct SettingsView: View {
                                   text("Turn off to receive only completion reminders, including during auto-review.", "关闭后仅接收完成提醒，也适用于 auto-review 期间。"),
                                   $preferences.codexPermissionRequestEnabled)
                         .disabled(!preferences.codexAppEnabled)
-                    DisclosureGroup(text("Hook setup and trust", "Hook 设置与信任")) {
+                    detailsDisclosure(
+                        text("Hook setup and trust", "Hook 设置与信任"),
+                        isExpanded: $codexDetailsExpanded
+                    ) {
                         Text(text("Managed hooks are written to ~/.codex/hooks.json. Reopen Codex, then trust “Terminal Notifier: Codex approval reminder” (if enabled) and “Terminal Notifier: Codex completion reminder” in Settings > Hooks. Auto-review can still emit approval events.", "受管理的 hooks 写入 ~/.codex/hooks.json。重新打开 Codex，然后在设置 > 钩子中信任 “Terminal Notifier: Codex approval reminder”（如已开启）和 “Terminal Notifier: Codex completion reminder”。auto-review 仍可能产生审批事件。"))
                             .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     }
@@ -356,6 +365,47 @@ struct SettingsView: View {
         HStack(spacing: 5) {
             Image(systemName: symbol)
             Text(title)
+        }
+    }
+
+    private func detailsDisclosure<Content: View>(
+        _ title: String,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if reduceMotion {
+                    isExpanded.wrappedValue.toggle()
+                } else {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isExpanded.wrappedValue.toggle()
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                        .frame(width: 14)
+                    Text(title)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(text(
+                isExpanded.wrappedValue ? "Expanded" : "Collapsed",
+                isExpanded.wrappedValue ? "已展开" : "已折叠"))
+
+            if isExpanded.wrappedValue {
+                content()
+                    .padding(.leading, 20)
+                    .transition(reduceMotion
+                        ? .identity
+                        : .opacity)
+            }
         }
     }
 

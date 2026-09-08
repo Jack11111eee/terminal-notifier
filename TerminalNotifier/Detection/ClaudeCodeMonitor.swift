@@ -166,10 +166,11 @@ class ClaudeCodeMonitor {
             try? FileManager.default.removeItem(at: url)
             guard let category = marker.category else { continue }
 
-            // tty → 窗口的解析无条件执行：归因开关只决定「Terminal 前台时是否
-            // 抑制最上层窗口的事件」，跳转（用户点击查看来源/历史记录）在任何
-            // 配置下都应能精确到窗口。
-            let target = marker.tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
+            // 窗口归因可能执行 Terminal AppleScript，只能在用户明确开启后运行。
+            // 开关关闭时仍保留 marker 的 tty，用户之后主动点击历史记录时再定位。
+            let target = Self.attributedWindow(
+                for: marker.tty,
+                enabled: windowAttributionEnabled)
 
             guard Self.shouldEmit(
                 category: category, frontmost: frontmost,
@@ -188,6 +189,16 @@ class ClaudeCodeMonitor {
                 tty: marker.tty,
                 targetWindow: target))
         }
+    }
+
+    /// 只在用户 opt-in 后解析 Terminal 窗口。`resolver` 参数使禁用路径可回归验证。
+    static func attributedWindow(
+        for tty: String?,
+        enabled: Bool,
+        resolver: (String) -> TerminalWindowInfo? = { TerminalWindowRegistry.window(forTTY: $0) }
+    ) -> TerminalWindowInfo? {
+        guard enabled, let tty else { return nil }
+        return resolver(tty)
     }
 
     /// Terminal 前台 + 窗口归因开启时，丢弃属于最上层（用户正看的）窗口的事件。
@@ -210,12 +221,13 @@ class ClaudeCodeMonitor {
 
     /// 防抖收束事件发送前重查归因（timer 回调时刻的前台状态可能已变化）。
     private func flushWindowAttribution(for tty: String?, emit: @escaping (TerminalWindowInfo?) -> Void) {
-        let target = tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
+        let windowAttributionEnabled = PreferencesManager.shared.claudeWindowAttributionEnabled
+        let target = Self.attributedWindow(for: tty, enabled: windowAttributionEnabled)
         guard Self.shouldEmit(
             category: .doneBatched,
             frontmost: isTerminalFrontmost(),
             target: target,
-            windowAttributionEnabled: PreferencesManager.shared.claudeWindowAttributionEnabled
+            windowAttributionEnabled: windowAttributionEnabled
         ) else { return }
         emit(target)
     }

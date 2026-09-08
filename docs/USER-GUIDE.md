@@ -120,11 +120,11 @@
 
 ### Q: 历史记录里有些记录点「跳转到窗口」只激活了 Terminal 本体，为什么？
 
-Claude Code 是由 GUI 进程启动的，hook 子进程通常**没有 controlling TTY**,hook 脚本里通过 `ps -o tty=` / `tty` / `lsof` 三级兜底也常拿不到真实 tty。拿不到 TTY 时,marker 里没有 tty 信息，App 就把历史跳窗降级为「激活 Terminal 本体」。这是 Claude Code 自身进程模型的限制，无法从 hook 这端根治；如果你需要可靠的跳窗归因，建议在 Terminal 里手动唤起 Claude Code（此时 hook 有 controlling TTY，归因更可靠）。
+Claude Code hook 子进程可能没有 controlling TTY。hook 会依次尝试 `ps -o tty=`、`tty`、`lsof`，并沿父进程链向上查找第一个有 controlling TTY 的祖先进程。四级探测全部失败时，marker 不携带有效 TTY，App 会将历史跳转降级为「激活 Terminal 本体」。在 Terminal 中启动 Claude Code 时，通常能够沿父进程链找到对应 TTY；完全由 GUI 启动且进程链中没有 TTY 时则仍会降级。
 
 ### Q: 为什么开启 Claude 前台多窗口归因后 macOS 要权限？
 
-基础 badge 检测和 Claude 后台 hook 提醒不需要辅助功能权限。Claude 前台多窗口归因需要读取和抬起 Terminal 窗口，因此会请求辅助功能权限；使用 Terminal 自动化信息辅助匹配窗口时，macOS 也可能弹出控制 Terminal 的权限提示。
+基础 badge 检测和 Claude 后台 hook 提醒不需要辅助功能权限。关闭「前台多窗口归因」时，App 不会为接收到的 hook 事件运行 Terminal AppleScript。开启后需要读取和抬起 Terminal 窗口，因此会请求辅助功能权限；使用 Terminal 自动化信息辅助匹配窗口时，macOS 也可能弹出控制 Terminal 的权限提示。用户主动从历史记录打开来源时，App 仍可按记录中的 TTY 尝试定位窗口。
 
 ### Q: 会收集我的数据吗？
 
