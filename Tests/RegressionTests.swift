@@ -175,6 +175,55 @@ final class HookManagerTests: XCTestCase {
 
 }
 
+final class WindowAttributionPolicyTests: XCTestCase {
+    func testDisabledAttributionDoesNotResolveTerminalWindow() {
+        var resolverCalled = false
+        let result = ClaudeCodeMonitor.attributedWindow(
+            for: "ttys001",
+            enabled: false
+        ) { _ in
+            resolverCalled = true
+            return TerminalWindowInfo(
+                windowID: 1,
+                ownerPID: 42,
+                title: "Terminal",
+                bounds: .zero)
+        }
+
+        XCTAssertNil(result)
+        XCTAssertFalse(resolverCalled, "Opted-out attribution must not run Terminal window lookup")
+    }
+
+    func testEnabledAttributionUsesResolver() {
+        let expected = TerminalWindowInfo(
+            windowID: 7,
+            ownerPID: 42,
+            title: "Terminal",
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600))
+        var receivedTTY: String?
+
+        let result = ClaudeCodeMonitor.attributedWindow(
+            for: "ttys007",
+            enabled: true
+        ) { tty in
+            receivedTTY = tty
+            return expected
+        }
+
+        XCTAssertEqual(receivedTTY, "ttys007")
+        XCTAssertEqual(result, expected)
+    }
+
+    func testScreenLocatorRejectsMissingAndDifferentOwnerPID() {
+        let key = kCGWindowOwnerPID as String
+        XCTAssertFalse(TerminalScreenLocator.windowBelongsToOwner([:], ownerPID: 42))
+        XCTAssertFalse(TerminalScreenLocator.windowBelongsToOwner(
+            [key: NSNumber(value: 41)], ownerPID: 42))
+        XCTAssertTrue(TerminalScreenLocator.windowBelongsToOwner(
+            [key: NSNumber(value: 42)], ownerPID: 42))
+    }
+}
+
 private final class RecordingDelegate: NotificationStateMachineDelegate {
     var requests: [AgentNotificationEvent] = []
     var suppress = false
@@ -595,6 +644,7 @@ enum RegressionTests {
         ], forName: UserDefaults.argumentDomain)
         let suite = XCTestSuite(name: "Terminal Notifier regressions")
         suite.addTest(HookManagerTests.defaultTestSuite)
+        suite.addTest(WindowAttributionPolicyTests.defaultTestSuite)
         suite.addTest(NotificationStateMachineTests.defaultTestSuite)
         suite.addTest(SettingsVisualModeTests.defaultTestSuite)
         suite.addTest(DoneDebouncerTests.defaultTestSuite)

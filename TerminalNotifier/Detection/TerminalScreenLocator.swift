@@ -7,6 +7,7 @@ struct TerminalScreenLocator {
         let ownerPID = NSWorkspace.shared.runningApplications
             .first { $0.bundleIdentifier == bundleIdentifier }?
             .processIdentifier
+        guard let ownerPID else { return fallbackScreen }
 
         let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
@@ -14,9 +15,7 @@ struct TerminalScreenLocator {
         ) as? [[String: Any]] ?? []
 
         for window in windowList {
-            if let ownerPID,
-               let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-               pid != ownerPID { continue }
+            guard windowBelongsToOwner(window, ownerPID: ownerPID) else { continue }
             guard let boundsDict = window[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
             let bounds = CGRect(
                 x: boundsDict["X"] ?? 0,
@@ -32,6 +31,17 @@ struct TerminalScreenLocator {
             break
         }
 
-        return NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
+        return fallbackScreen
+    }
+
+    static func windowBelongsToOwner(_ window: [String: Any], ownerPID: pid_t) -> Bool {
+        guard let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else {
+            return false
+        }
+        return pid == ownerPID
+    }
+
+    private static var fallbackScreen: NSScreen {
+        NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
     }
 }
