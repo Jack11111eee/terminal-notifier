@@ -16,10 +16,13 @@ final class SpeechBubbleView: NSView {
     var onSnoozeTapped: (() -> Void)?
     var onCloseTapped: (() -> Void)?
     var onOpenTapped: (() -> Void)?
+    /// 「屏蔽此窗口」入口（仅 Claude Code 来源且有 tty 的提醒显示）。
+    var onBlockTapped: (() -> Void)?
     var snoozeTitle: String = "" { didSet { snoozeButton.title = snoozeTitle } }
     let snoozeButton = FirstClickButton(title: "", target: nil, action: nil)
     let closeButton = FirstClickButton(title: "", target: nil, action: nil)
     let openButton = FirstClickButton(title: "", target: nil, action: nil)
+    let blockButton = FirstClickButton(title: "", target: nil, action: nil)
     private let headingLabel = NSTextField(labelWithString: "Terminal Notifier")
     let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let content = NSView()
@@ -36,6 +39,9 @@ final class SpeechBubbleView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         let zh = PreferencesManager.shared.resolvedLocale == "zh"
+        blockButton.title = zh ? "屏蔽" : "Block"
+        blockButton.setAccessibilityLabel(zh ? "屏蔽此会话的提醒" : "Block reminders from this session")
+        blockButton.toolTip = zh ? "不再提醒这个终端会话（可在设置中解除）" : "Mute this terminal session (can be undone in Settings)"
         headingLabel.font = .systemFont(ofSize: 12, weight: .medium)
         headingLabel.textColor = .secondaryLabelColor
         headingLabel.lineBreakMode = .byTruncatingTail
@@ -56,12 +62,12 @@ final class SpeechBubbleView: NSView {
         closeButton.toolTip = zh ? "关闭提醒，不切换应用" : "Close without switching apps"
         closeButton.isBordered = false
         closeButton.keyEquivalent = "\u{1b}"
-        for button in [snoozeButton, openButton] {
+        for button in [snoozeButton, openButton, blockButton] {
             button.bezelStyle = .rounded
             button.controlSize = .regular
             button.font = .systemFont(ofSize: 13)
         }
-        for view in [headingLabel, messageLabel, closeButton, snoozeButton, openButton] {
+        for view in [headingLabel, messageLabel, closeButton, snoozeButton, openButton, blockButton] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
         }
@@ -71,6 +77,8 @@ final class SpeechBubbleView: NSView {
         closeButton.action = #selector(closeClicked)
         openButton.target = self
         openButton.action = #selector(openClicked)
+        blockButton.target = self
+        blockButton.action = #selector(blockClicked)
         let height = messageLabel.heightAnchor.constraint(equalToConstant: 18)
         height.isActive = true
         messageHeight = height
@@ -93,7 +101,10 @@ final class SpeechBubbleView: NSView {
             snoozeButton.centerYAnchor.constraint(equalTo: openButton.centerYAnchor),
             snoozeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
             snoozeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
-            snoozeButton.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 16)
+            snoozeButton.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 16),
+            blockButton.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 16),
+            blockButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
+            blockButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32)
         ])
         updateSurface()
         displayObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -210,6 +221,7 @@ final class SpeechBubbleView: NSView {
     @objc private func snoozeClicked() { onSnoozeTapped?() }
     @objc private func closeClicked() { onCloseTapped?() }
     @objc private func openClicked() { onOpenTapped?() }
+    @objc private func blockClicked() { onBlockTapped?() }
 }
 
 #if compiler(>=6.2)

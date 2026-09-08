@@ -266,6 +266,8 @@ struct AgentNotificationEvent {
 3. 找到来源窗口且来源窗口不是 `TerminalWindowRegistry.topWindow()`：回调，并把 `targetWindow` 交给状态机。
 4. 找不到来源窗口，或来源窗口就是最上层 Terminal 窗口：消费 marker 但不提醒。
 
+**会话级屏蔽（BlockedSessionsManager）：** `poll()` 消费 marker 后、进防抖器之前查 `BlockedSessionsManager.blocks(tty:category:)`——命中即 `recordIntercept` 后丢弃（不提醒、不进历史）；防抖收束路径 `flushWindowAttribution` 同样过一遍。键是 tty（marker 里永远携带，不依赖归因/辅助功能），范围 `all`（done + needsConfirm 全屏蔽）或 `doneOnly`（仅 done 类，needsConfirm 照常）。ty 为 nil 不屏蔽（宁可多提醒，不可误吞）。屏蔽入口在 Claude Code 提醒气泡的「屏蔽」按钮（AppDelegate 按来源 + tty 决定是否提供），选范围后写 UserDefaults 并关闭当前提醒；设置 → 通知页有管理列表。**tty 复用防护**：条目创建满 7 天自动失效并在下次加载时剔除。
+
 ### 3.6 Detection / TerminalWindowRegistry
 
 维护 Terminal 可见窗口顺序、TTY 归因和目标窗口抬起。

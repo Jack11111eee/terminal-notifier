@@ -110,6 +110,8 @@ struct AgentNotificationEvent {
 class ClaudeCodeMonitor {
     weak var delegate: ClaudeCodeMonitorDelegate?
     private var timer: Timer?
+    /// 会话屏蔽查询/记录，测试通过 init 注入替换。
+    private let blockedSessions: BlockedSessionsManager
     /// 同 tty 密集 done 合并；触发条件详见 DoneDebouncer 文档注释。
     private lazy var doneDebouncer = DoneDebouncer { [weak self] summary in
         guard let self else { return }
@@ -140,6 +142,10 @@ class ClaudeCodeMonitor {
         }
     }
 
+    init(blockedSessions: BlockedSessionsManager = .shared) {
+        self.blockedSessions = blockedSessions
+    }
+
     func stopMonitoring() {
         timer?.invalidate()
         timer = nil
@@ -165,6 +171,13 @@ class ClaudeCodeMonitor {
             let marker = Self.marker(for: url)
             try? FileManager.default.removeItem(at: url)
             guard let category = marker.category else { continue }
+
+            // 会话屏蔽：marker 消费后早期丢弃，不进防抖器也不提醒（彻底安静）。
+            // tty 为 nil 时（hook 探测失败）不命中——宁可多提醒，不可误吞。
+            if blockedSessions.blocks(tty: marker.tty, category: category) {
+                blockedSessions.recordIntercept(tty: marker.tty)
+                continue
+            }
 
             // 窗口归因可能执行 Terminal AppleScript，只能在用户明确开启后运行。
             // 开关关闭时仍保留 marker 的 tty，用户之后主动点击历史记录时再定位。
@@ -221,6 +234,11 @@ class ClaudeCodeMonitor {
 
     /// 防抖收束事件发送前重查归因（timer 回调时刻的前台状态可能已变化）。
     private func flushWindowAttribution(for tty: String?, emit: @escaping (TerminalWindowInfo?) -> Void) {
+        // 收束也过会话屏蔽：防抖窗口开启后才屏蔽的会话，汇总不再弹出。
+        if blockedSessions.blocks(tty: tty, category: .doneBatched) {
+            blockedSessions.recordIntercept(tty: tty)
+            return
+        }
         let windowAttributionEnabled = PreferencesManager.shared.claudeWindowAttributionEnabled
         let target = Self.attributedWindow(for: tty, enabled: windowAttributionEnabled)
         guard Self.shouldEmit(
