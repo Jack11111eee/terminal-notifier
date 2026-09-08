@@ -20,6 +20,13 @@ enum Constants {
     /// 收束时发一条「连续完成 N 轮」汇总。首个 done 仍立即提醒，不受影响。
     static let doneDebounceSeconds: TimeInterval = 60
 
+    // MARK: - 输入保护
+
+    /// 最近一次 keyDown 距今小于该秒数视为「正在输入」（CGEventSource 只读查询）。
+    static let typingActiveSeconds: TimeInterval = 3
+    /// 输入状态轮询周期（秒）。边沿检测用，0.5s 粒度足够人手感知。
+    static let typingPollSeconds: TimeInterval = 0.5
+
     // MARK: - Claude Code 集成
 
     /// Claude Code hook 与 App 之间的事件目录（相对 $HOME）。

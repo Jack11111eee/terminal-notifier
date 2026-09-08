@@ -516,7 +516,68 @@ final class DoneDebouncerTests: XCTestCase {
     }
 }
 
-/// Opt-in window tests require a GUI session; ordinary regressions remain headless.
+/// 输入保护（TypingActivity / TypingStateWatcher）的确定性回归。
+///
+/// provider 注入使全部用例不依赖真实键盘事件；CGEventSource 公开 API
+/// 不在 headless 测试里验证（无输入会话时行为未定义）。
+final class TypingActivityTests: XCTestCase {
+    func testThresholdSemantics() {
+        // 无按键记录 → 不算输入中
+        XCTAssertFalse(TypingActivity.isTyping(secondsSinceLastKeyDown: { nil }))
+        // 边界：恰在阈值上为「静止」（< 3），阈值内为「输入中」
+        XCTAssertFalse(TypingActivity.isTyping(secondsSinceLastKeyDown: { 3.0 }))
+        XCTAssertTrue(TypingActivity.isTyping(secondsSinceLastKeyDown: { 2.99 }))
+        XCTAssertFalse(TypingActivity.isTyping(secondsSinceLastKeyDown: { 300 }))
+        // 负值/非法值视为无记录,不当作输入中
+        XCTAssertFalse(TypingActivity.isTyping(secondsSinceLastKeyDown: { -1 }))
+        XCTAssertFalse(TypingActivity.isTyping(secondsSinceLastKeyDown: { .nan }))
+    }
+
+    func testWatcherEmitsOnEdgesOnly() {
+        // 可控 provider：按调用序返回 0.5(输入中) → 0.5 → 9(静止) → 9 → 0.5(再次输入)
+        var readings: [Double?] = [3.5, 3.5, 0.5, 0.5, 9, 9, 0.5, 9]
+        var began = 0
+        var ended = 0
+        let watcher = TypingStateWatcher(secondsSinceLastKeyDown: { readings.removeFirst() })
+        watcher.onTypingBegan = { began += 1 }
+        watcher.onTypingEnded = { ended += 1 }
+        watcher.start()
+
+        // start 取走第一个读数(3.5 → 静止初值,无回调)。
+        // 用 RunLoop 真实驱动 timer;每次 tick 消耗一个读数。
+        func tick() { RunLoop.current.run(until: Date().addingTimeInterval(0.6)) }
+        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 0)  // 0.5 → began
+        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 0)  // 0.5 → 无边沿
+        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 1)  // 9 → ended
+        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 1)  // 9 → 无边沿
+        tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 1)  // 0.5 → began
+        tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 2)  // 9 → ended
+        watcher.stop()
+        // stop 后不再产生回调
+        readings.append(contentsOf: [0.5, 0.5])
+        tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 2)
+    }
+
+    func testWatcherReinitSnapshotOnStartAvoidsFalseBegin() {
+        // 重启时若已在输入态初值,首个 tick 不应触发 onTypingBegan(同态无边沿)。
+        var reading: Double? = 0.5
+        var began = 0
+        let watcher = TypingStateWatcher(secondsSinceLastKeyDown: { reading })
+        watcher.onTypingBegan = { began += 1 }
+        watcher.start()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        XCTAssertEqual(began, 0, "启动快照与首 tick 同为输入态,不应报边沿")
+        reading = 9
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        XCTAssertEqual(began, 0)
+        reading = 0.5
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        XCTAssertEqual(began, 1, "静止 → 输入的边沿正常触发")
+        watcher.stop()
+    }
+}
+
+
 final class WindowLayoutTests: XCTestCase {
     private func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
 
@@ -619,6 +680,40 @@ final class WindowLayoutTests: XCTestCase {
         XCTAssertTrue(content.bubbleView.bounds.contains(textRect))
     }
 
+    /// 输入保护：迷你形态出现在屏幕右下角且远小于全尺寸；点击展开恢复全尺寸布局。
+    func testMiniOverlayStaysInCornerAndExpandsOnTap() throws {
+        let screen = try requireScreen()
+        let overlay = OverlayWindowController()
+        defer { overlay.forceClose() }
+
+        overlay.show(on: screen, message: "这是一条示例提醒。准备好后，回到你的工作。",
+                     source: .claudeCode, category: .needsConfirm, mini: true)
+        var panel = try XCTUnwrap(NSApp.windows.first { $0 is OverlayWindow && $0.isVisible })
+        let visible = screen.visibleFrame
+        // 迷你猫必须在可见区域的右下象限（不遮中央视线）
+        XCTAssertLessThan(panel.frame.midX, visible.maxX - 10)
+        XCTAssertGreaterThan(panel.frame.midY, visible.minY + 10)
+        XCTAssertLessThanOrEqual(panel.frame.width, 80, "Mini overlay must stay tiny")
+        var content = try XCTUnwrap(panel.contentView as? OverlayContentView)
+        XCTAssertFalse(content.bubbleView.superview === content,
+                      "Mini mode must not show the speech bubble")
+
+        // 点击展开：回到接近全尺寸、气泡可见
+        content.onTap?()
+        settle()
+        panel = try XCTUnwrap(NSApp.windows.first { $0 is OverlayWindow && $0.isVisible })
+        content = try XCTUnwrap(panel.contentView as? OverlayContentView)
+        XCTAssertGreaterThan(panel.frame.height, 200, "Expanded overlay holds the bubble and big cat")
+        XCTAssertTrue(content.bubbleView.superview === content || content.bubbleView.superview != nil,
+                      "Expanded overlay re-attaches the bubble")
+
+        // 展开后处于非迷你态，再次开始输入时 shrink 应重建迷你形态
+        overlay.shrinkToMiniIfNeeded(force: false)
+        settle()
+        panel = try XCTUnwrap(NSApp.windows.first { $0 is OverlayWindow && $0.isVisible })
+        XCTAssertLessThanOrEqual(panel.frame.width, 80, "Shrunk overlay must be tiny again")
+    }
+
     func testReducedMotionAnimationsCompleteWithoutTravel() {
         let layer = CALayer()
         layer.position = CGPoint(x: 100, y: 100)
@@ -648,6 +743,7 @@ enum RegressionTests {
         suite.addTest(NotificationStateMachineTests.defaultTestSuite)
         suite.addTest(SettingsVisualModeTests.defaultTestSuite)
         suite.addTest(DoneDebouncerTests.defaultTestSuite)
+        suite.addTest(TypingActivityTests.defaultTestSuite)
         if ProcessInfo.processInfo.environment["TN_RUN_UI_TESTS"] == "1" {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.accessory)

@@ -211,6 +211,9 @@ struct SettingsView: View {
                             Text(text("\(value) minutes", "\(value) 分钟")).tag(value)
                         }
                     }
+                    settingToggle(text("Stay small while typing", "输入时保持迷你"),
+                                  text("While you type, new reminders appear as a small cat in the corner, and the big one shrinks. Click the small cat to expand.", "打字时新提醒以角落迷你猫出现，挂着的猫也会缩小；点击迷你猫可展开。"),
+                                  $preferences.typingShrinkEnabled)
                     settingToggle(text("Click the cat to open the source", "点击猫咪打开来源"),
                                   text("When off, clicking the cat closes the reminder. Close and Later never switch apps.", "关闭此项时，点击猫咪仅关闭提醒。“关闭”和“稍后”始终不会切换应用。"),
                                   $preferences.switchToTerminal)
