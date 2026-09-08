@@ -8,6 +8,8 @@ struct MessageProvider {
         case merged = "merged"
         case needsConfirm = "needs_confirm"
         case done = "done"
+        /// 防抖收束：同一 tty 窗口期内多条 done 合并成的汇总提醒。
+        case doneBatched = "done_batched"
         case codexNeedsConfirm = "codex_needs_confirm"
         case codexDone = "codex_done"
     }
@@ -42,6 +44,18 @@ struct MessageProvider {
         return template.replacingOccurrences(of: "{count}", with: String(count))
     }
 
+    /// 防抖收束后的 done 汇总文案（「连续完成 {count} 轮」）。
+    func doneBatchedMessage(count: Int, locale: String) -> String {
+        let loc = messages[locale] ?? messages["en"] ?? [:]
+        guard let list = loc[Category.doneBatched.rawValue] as? [String] else {
+            return locale == "zh"
+                ? "Claude 连续完成 \(count) 轮啦！"
+                : "Claude finished \(count) turns in a row!"
+        }
+        let template = list[Int.random(in: 0..<list.count)]
+        return template.replacingOccurrences(of: "{count}", with: String(count))
+    }
+
     private func fallbackMessage(category: Category, locale: String) -> String {
         switch category {
         case .newNotification:
@@ -54,6 +68,8 @@ struct MessageProvider {
             return locale == "zh" ? "Claude 需要你确认！" : "Claude needs your confirmation!"
         case .done:
             return locale == "zh" ? "Claude 说完啦！" : "Claude is done!"
+        case .doneBatched:
+            return locale == "zh" ? "Claude 连续完成了一串任务！" : "Claude finished a streak of turns!"
         case .codexNeedsConfirm:
             return locale == "zh" ? "Codex 需要你确认！" : "Codex needs your confirmation!"
         case .codexDone:

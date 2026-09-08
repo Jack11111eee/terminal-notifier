@@ -138,7 +138,7 @@ final class OverlayWindowController {
         let status: String
         switch category {
         case .needsConfirm, .codexNeedsConfirm: status = zh ? "需要确认" : "Needs confirmation"
-        case .done, .codexDone: status = zh ? "已完成" : "Completed"
+        case .done, .codexDone, .doneBatched: status = zh ? "已完成" : "Completed"
         case .longWait: status = zh ? "等待处理" : "Waiting for you"
         default: status = zh ? "提醒" : "Reminder"
         }

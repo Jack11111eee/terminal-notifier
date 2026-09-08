@@ -27,6 +27,12 @@
     "Claude wrapped up — go take a look!",
     "All done, meow! The results are in!"
   ],
+  "done_batched": [
+    "Meow~ Claude finished {count} turns in a row!",
+    "Claude just completed {count} turns back-to-back, come check!",
+    "A streak of {count} finished turns, meow! Nice pace~",
+    "Claude wrapped up {count} turns rapid-fire! All waiting in the terminal"
+  ],
   "codex_needs_confirm": [
     "Meow! Codex needs your confirmation~",
     "Codex has an action waiting for approval.",

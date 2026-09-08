@@ -16,6 +16,10 @@ enum Constants {
     /// 点击「稍后」后再次提醒的默认延迟（秒）。
     static let snoozeMinutesDefault: Int = 10
 
+    /// 同一 tty 的密集 done 合并窗口（秒）：窗口期内后续 done 不再逐条弹猫，
+    /// 收束时发一条「连续完成 N 轮」汇总。首个 done 仍立即提醒，不受影响。
+    static let doneDebounceSeconds: TimeInterval = 60
+
     // MARK: - Claude Code 集成
 
     /// Claude Code hook 与 App 之间的事件目录（相对 $HOME）。

@@ -58,6 +58,8 @@ class NotificationStateMachine {
     /// 当前事件的 TTY（仅 Claude hook 来源有），供 delegate 写入历史记录。
     /// 生命周期与 activeTargetWindow 一致。
     private(set) var activeTTY: String?
+    /// doneBatched 事件合并的 done 轮数（DoneDebouncer 填充），其余事件为 0。
+    private var activeBatchCount: Int = 0
     /// 当前展示/挂起中的提醒原文，供 pendingInfo 记录并在倒计时后原样重弹。
     private var activeMessage: String?
     /// Accepted hook events wait in arrival order until the current overlay is closed.
@@ -349,8 +351,12 @@ class NotificationStateMachine {
         activeSource = event.source
         activeTargetWindow = event.targetWindow
         activeTTY = event.tty
+        activeBatchCount = event.batchCount
         pendingCount = 1
-        let message = messageProvider.randomMessage(category: event.category, locale: locale)
+        // doneBatched 携带合并轮数（activeBatchCount），文案需注入 {count}。
+        let message = event.category == .doneBatched && activeBatchCount > 1
+            ? messageProvider.doneBatchedMessage(count: activeBatchCount, locale: locale)
+            : messageProvider.randomMessage(category: event.category, locale: locale)
         activeMessage = message
         badgeFirstDetectedAt = Date()
         currentState = .detected(count: 1)
@@ -432,6 +438,7 @@ class NotificationStateMachine {
         }
     }
 
+    /** Stops all timers and fully resets state for monitoring pause or shutdown. */
     func reset() {
         cooldownTimer?.invalidate()
         cooldownTimer = nil
@@ -448,6 +455,7 @@ class NotificationStateMachine {
         activeSource = .terminal
         activeTargetWindow = nil
         activeTTY = nil
+        activeBatchCount = 0
         activeMessage = nil
         pendingInfo = nil
         pendingAgents.removeAll()

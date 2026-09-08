@@ -371,6 +371,102 @@ final class SettingsVisualModeTests: XCTestCase {
     }
 }
 
+/// 同 tty done 防抖（DoneDebouncer）的确定性回归。
+///
+/// DoneDebouncer 用 RunLoop.main 上的 Timer，测试直接在主线程用真实 RunLoop
+/// 驱动（waitRunLoop 积毫秒跑 loop 让 timer 到期），无需 mock。
+final class DoneDebouncerTests: XCTestCase {
+    private var summaries: [DoneDebouncer.Summary] = []
+
+    override func setUp() {
+        summaries = []
+    }
+
+    private func doneEvent(tty: String?) -> AgentNotificationEvent {
+        AgentNotificationEvent(category: .done, source: .claudeCode, tty: tty, targetWindow: nil)
+    }
+
+    private func waitRunLoop(_ seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    func testFirstDonePassesThroughAndLaterOnesFoldIntoSummary() {
+        let debouncer = DoneDebouncer(windowSeconds: 0.15, onEmit: { [weak self] in
+            self?.summaries.append($0) })
+        // 首条 done 立即放行（offer 返回 true）
+        XCTAssertTrue(debouncer.offer(doneEvent(tty: "ttys999")))
+        // 窗口期内后续 done 被吞（offer 返回 false），不产生第二个放行
+        XCTAssertFalse(debouncer.offer(doneEvent(tty: "ttys999")))
+        XCTAssertFalse(debouncer.offer(doneEvent(tty: "ttys999")))
+        XCTAssertTrue(summaries.isEmpty)
+        waitRunLoop(0.3)
+        // 收束：一条「3 连发」汇总，tty 保留
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(summaries.first?.tty, "ttys999")
+        XCTAssertEqual(summaries.first?.count, 3)
+    }
+
+    func testSingleDoneFlowsThroughWithoutSummary() {
+        let debouncer = DoneDebouncer(windowSeconds: 0.15, onEmit: { [weak self] in
+            self?.summaries.append($0) })
+        XCTAssertTrue(debouncer.offer(doneEvent(tty: "ttys001")))
+        waitRunLoop(0.3)
+        // 窗口内只有一条：无汇总事件，安静结束（也不补发 done——它已经弹过了）
+        XCTAssertTrue(summaries.isEmpty)
+    }
+
+    func testNeedsConfirmAndOtherSourcesBypassDebounce() {
+        let debouncer = DoneDebouncer(windowSeconds: 0.15, onEmit: { [weak self] in
+            self?.summaries.append($0) })
+        // needs_confirm 不进防抖窗口，offer 恒 true
+        XCTAssertTrue(debouncer.offer(AgentNotificationEvent(
+            category: .needsConfirm, source: .claudeCode, tty: "ttys005", targetWindow: nil)))
+        // 非 claudeCode 来源的 done 也不进防抖
+        XCTAssertTrue(debouncer.offer(AgentNotificationEvent(
+            category: .done, source: .codexApp, tty: nil, targetWindow: nil)))
+        waitRunLoop(0.3)
+        XCTAssertTrue(summaries.isEmpty)
+    }
+
+    func testSeparateTTYsDebounceIndependently() {
+        let debouncer = DoneDebouncer(windowSeconds: 0.15, onEmit: { [weak self] in
+            self?.summaries.append($0) })
+        XCTAssertTrue(debouncer.offer(doneEvent(tty: "ttys100")))
+        XCTAssertFalse(debouncer.offer(doneEvent(tty: "ttys100")))
+        XCTAssertTrue(debouncer.offer(doneEvent(tty: "ttys200")))
+        XCTAssertFalse(debouncer.offer(doneEvent(tty: "ttys200")))
+        waitRunLoop(0.3)
+        XCTAssertEqual(summaries.count, 2)
+        // 用 tty 内容断言两条各自独立，顺序不做强约束
+        let ttys = Set(summaries.map { $0.tty ?? "" })
+        XCTAssertEqual(ttys, ["ttys100", "ttys200"])
+        XCTAssertTrue(summaries.allSatisfy { $0.count == 2 })
+    }
+
+    func testWindowResetsAfterFlush() {
+        let debouncer = DoneDebouncer(windowSeconds: 0.15, onEmit: { [weak self] in
+            self?.summaries.append($0) })
+        XCTAssertTrue(debouncer.offer(doneEvent(tty: "ttys300")))
+        XCTAssertFalse(debouncer.offer(doneEvent(tty: "ttys300")))
+        waitRunLoop(0.3)
+        XCTAssertEqual(summaries.count, 1)
+        // 收束后再来 done：新一轮窗口，first 再次放行
+        XCTAssertTrue(debouncer.offer(doneEvent(tty: "ttys300")))
+        waitRunLoop(0.3)
+        XCTAssertEqual(summaries.count, 1, "新一轮的单条 done 不产生汇总")
+    }
+
+    func testCancelDropsPendingSummaries() {
+        let debouncer = DoneDebouncer(windowSeconds: 0.15, onEmit: { [weak self] in
+            self?.summaries.append($0) })
+        XCTAssertTrue(debouncer.offer(doneEvent(tty: "ttys400")))
+        XCTAssertFalse(debouncer.offer(doneEvent(tty: "ttys400")))
+        debouncer.cancel()
+        waitRunLoop(0.3)
+        XCTAssertTrue(summaries.isEmpty, "cancel 后不应再收束出汇总事件")
+    }
+}
+
 /// Opt-in window tests require a GUI session; ordinary regressions remain headless.
 final class WindowLayoutTests: XCTestCase {
     private func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
@@ -501,6 +597,7 @@ enum RegressionTests {
         suite.addTest(HookManagerTests.defaultTestSuite)
         suite.addTest(NotificationStateMachineTests.defaultTestSuite)
         suite.addTest(SettingsVisualModeTests.defaultTestSuite)
+        suite.addTest(DoneDebouncerTests.defaultTestSuite)
         if ProcessInfo.processInfo.environment["TN_RUN_UI_TESTS"] == "1" {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.accessory)
