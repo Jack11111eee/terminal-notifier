@@ -534,8 +534,8 @@ final class TypingActivityTests: XCTestCase {
     }
 
     func testWatcherEmitsOnEdgesOnly() {
-        // 可控 provider：按调用序返回 0.5(输入中) → 0.5 → 9(静止) → 9 → 0.5(再次输入)
-        var readings: [Double?] = [3.5, 3.5, 0.5, 0.5, 9, 9, 0.5, 9]
+        // 可控 provider 按 tick 顺序返回；start() 先取快照(静止初值,无回调)。
+        var readings: [Double?] = [3.5, 0.5, 0.5, 9, 9, 0.5, 9, 0.5]
         var began = 0
         var ended = 0
         let watcher = TypingStateWatcher(secondsSinceLastKeyDown: { readings.removeFirst() })
@@ -543,36 +543,43 @@ final class TypingActivityTests: XCTestCase {
         watcher.onTypingEnded = { ended += 1 }
         watcher.start()
 
-        // start 取走第一个读数(3.5 → 静止初值,无回调)。
-        // 用 RunLoop 真实驱动 timer;每次 tick 消耗一个读数。
-        func tick() { RunLoop.current.run(until: Date().addingTimeInterval(0.6)) }
-        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 0)  // 0.5 → began
-        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 0)  // 0.5 → 无边沿
-        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 1)  // 9 → ended
-        tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 1)  // 9 → 无边沿
-        tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 1)  // 0.5 → began
-        tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 2)  // 9 → ended
+        // 同步驱动分派,不做真实 RunLoop 等待（timer 由生产 RunLoop 驱动,
+        // 逻辑正确性在这里验证,时序不在本用例关注范围）。
+        watcher.tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 0)  // 0.5 → began
+        watcher.tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 0)  // 0.5 → 无边沿
+        watcher.tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 1)  // 9 → ended
+        watcher.tick(); XCTAssertEqual(began, 1); XCTAssertEqual(ended, 1)  // 9 → 无边沿
+        watcher.tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 1)  // 0.5 → began
+        watcher.tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 2)  // 9 → ended
         watcher.stop()
-        // stop 后不再产生回调
-        readings.append(contentsOf: [0.5, 0.5])
-        tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 2)
+        // stop 后不再产生回调（tick 显式守卫退出）
+        watcher.tick(); XCTAssertEqual(began, 2); XCTAssertEqual(ended, 2)
     }
 
     func testWatcherReinitSnapshotOnStartAvoidsFalseBegin() {
-        // 重启时若已在输入态初值,首个 tick 不应触发 onTypingBegan(同态无边沿)。
-        var reading: Double? = 0.5
+        // 启动快照取当前态；首 tick 若仍同态,不应报 onTypingBegan 边沿。
+        var reading: Double? = 3.5
         var began = 0
+        var ended = 0
         let watcher = TypingStateWatcher(secondsSinceLastKeyDown: { reading })
         watcher.onTypingBegan = { began += 1 }
+        watcher.onTypingEnded = { ended += 1 }
         watcher.start()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
-        XCTAssertEqual(began, 0, "启动快照与首 tick 同为输入态,不应报边沿")
-        reading = 9
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
-        XCTAssertEqual(began, 0)
+        XCTAssertEqual(began, 0, "start 只取快照,不触发回调")
         reading = 0.5
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
-        XCTAssertEqual(began, 1, "静止 → 输入的边沿正常触发")
+        watcher.tick()
+        XCTAssertEqual(began, 1, "静止 → 输入 的边沿正常触发")
+        XCTAssertEqual(ended, 0)
+        reading = 9
+        watcher.tick()
+        XCTAssertEqual(ended, 1, "输入 → 静止 的边沿正常触发")
+        // 重启时若已在输入态：快照吸收该状态,首 tick 不误报 began（暂停恢复路径依赖）
+        reading = 0.5
+        watcher.start()
+        XCTAssertEqual(began, 1, "重启只取快照,不触发回调")
+        watcher.tick()
+        XCTAssertEqual(began, 1, "首 tick 与快照同为输入态,无边沿")
+        XCTAssertEqual(ended, 1)
         watcher.stop()
     }
 }

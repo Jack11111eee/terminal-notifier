@@ -68,7 +68,10 @@ final class TypingStateWatcher {
         currentTyping()
     }
 
-    private func tick() {
+    /// 边沿处理逻辑。timer 每周期调用；也暴露给回归测试同步驱动
+    /// （未运行 RunLoop 时 timer 不会自触发，手动调用是唯一驱动源）。
+    func tick() {
+        guard isActive, timer != nil else { return }
         let typing = currentTyping()
         if typing && !wasTyping { onTypingBegan?() }
         if !typing && wasTyping { onTypingEnded?() }
