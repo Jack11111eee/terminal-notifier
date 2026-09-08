@@ -233,7 +233,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         currentOverlayTargetWindow = targetWindow
         let screen = targetWindow.map { TerminalWindowRegistry.screen(for: $0) }
-            ?? TerminalScreenLocator.locateScreen(ownerName: source.windowOwnerName)
+            ?? TerminalScreenLocator.locateScreen(bundleIdentifier: source.bundleIdentifier ?? Constants.terminalBundleIdentifier)
         tnLog("showOverlay: calling overlayController.show screen=\(screen)")
         overlayController.show(on: screen, message: message, source: source, category: category)
         soundManager.playNotificationSound(for: category)

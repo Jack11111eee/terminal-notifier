@@ -18,16 +18,18 @@ enum TerminalWindowRegistry {
     }
 
     static func orderedWindows() -> [TerminalWindowInfo] {
+        // owner 名随系统语言本地化（中文系统为「终端」），按 PID 匹配才可靠。
+        let terminalPID = Self.terminalOwnerPID()
         let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
         ) as? [[String: Any]] ?? []
 
         return windowList.compactMap { window in
-            guard (window[kCGWindowOwnerName as String] as? String) == "Terminal",
-                  (window[kCGWindowLayer as String] as? Int) == 0,
+            guard (window[kCGWindowLayer as String] as? Int) == 0,
                   let id = uint32(in: window, key: kCGWindowNumber as String),
                   let pid = int(in: window, key: kCGWindowOwnerPID as String),
+                  pid == terminalPID,
                   let boundsDict = window[kCGWindowBounds as String] as? [String: Any]
             else { return nil }
 
@@ -56,6 +58,13 @@ enum TerminalWindowRegistry {
         topWindow()?.windowID == window.windowID
     }
 
+    /// Terminal.app 的进程号；未运行时返回 -1（与任何窗口 PID 都不相等）。
+    private static func terminalOwnerPID() -> pid_t {
+        NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == Constants.terminalBundleIdentifier }?
+            .processIdentifier ?? -1
+    }
+
     static func screen(for window: TerminalWindowInfo?) -> NSScreen {
         guard let window else {
             return NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
@@ -73,6 +82,9 @@ enum TerminalWindowRegistry {
     static func window(forTTY tty: String) -> TerminalWindowInfo? {
         let normalized = normalizeTTY(tty)
         let windows = orderedWindows()
+        if windows.isEmpty {
+            tnLog("window(forTTY:) no windows (Terminal not running or no on-screen layer-0 windows)")
+        }
 
         if windows.count == 1 {
             return windows.first
@@ -81,6 +93,7 @@ enum TerminalWindowRegistry {
         if let fromScripting = windowFromTerminalScripting(forTTY: normalized, windows: windows) {
             return fromScripting
         }
+        tnLog("window(forTTY:) scripting match failed for \(normalized), windows=\(windows.count)")
 
         if let fromTitle = windows.first(where: { titleContainsTTY($0.title, tty: normalized) }) {
             return fromTitle
@@ -98,15 +111,35 @@ enum TerminalWindowRegistry {
     static func activate(_ window: TerminalWindowInfo?) {
         guard let window else {
             NSWorkspace.shared.runningApplications
-                .first { $0.bundleIdentifier == "com.apple.Terminal" }?
+                .first { $0.bundleIdentifier == Constants.terminalBundleIdentifier }?
                 .activate(options: .activateIgnoringOtherApps)
             return
         }
 
+        // 先抬窗再激活进程：进程激活时 macOS 会把 app 的最上层窗口带到前台，
+        // 若先激活后抬窗，用户看到的是旧的前层窗口（窗口级跳转失效的直接原因）。
+        // AppleScript set index 只调整 Terminal 内部的 z 序（实测可靠），
+        // 所以完整动作 = set index 抬窗 → 激活进程带着新前窗到前台。
+        raiseViaAppleScript(window)
         NSWorkspace.shared.runningApplications
             .first { $0.processIdentifier == window.ownerPID }?
             .activate(options: .activateIgnoringOtherApps)
+    }
 
+    /// 失败时退回 AXRaise（旧路径），供 AppleScript 不可用时兜底。
+    private static func raiseViaAppleScript(_ window: TerminalWindowInfo) {
+        let script = """
+        tell application id "com.apple.Terminal"
+            set index of window id \(window.windowID) to 1
+        end tell
+        """
+        var error: NSDictionary?
+        if NSAppleScript(source: script)?.executeAndReturnError(&error) != nil { return }
+
+        // AppleScript 路径失败（未授权自动化等）：激活进程 + AXRaise 尽力抬。
+        NSWorkspace.shared.runningApplications
+            .first { $0.processIdentifier == window.ownerPID }?
+            .activate(options: .activateIgnoringOtherApps)
         guard let axWindow = axWindow(matching: window) else { return }
         AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
     }
@@ -202,7 +235,10 @@ enum TerminalWindowRegistry {
 
         var error: NSDictionary?
         guard let output = NSAppleScript(source: script)?.executeAndReturnError(&error).stringValue,
-              !output.isEmpty else { return [] }
+              !output.isEmpty else {
+            tnLog("terminalScriptWindows: AppleScript failed, error=\(error?["NSLocalizedDescription"] ?? "nil")")
+            return []
+        }
 
         return output
             .split(separator: "\u{1e}")

@@ -57,18 +57,22 @@ class ClaudeCodeMonitor {
             try? FileManager.default.removeItem(at: url)
             guard let category = marker.category else { continue }
 
+            // tty → 窗口的解析无条件执行：归因开关只决定「Terminal 前台时是否
+            // 抑制最上层窗口的事件」，跳转（用户点击查看来源/历史记录）在任何
+            // 配置下都应能精确到窗口。
+            let target = marker.tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
+
             guard windowAttributionEnabled else {
                 if !frontmost {
                     delegate?.claudeCodeMonitor(self, didEmit: AgentNotificationEvent(
                         category: category,
                         source: .claudeCode,
                         tty: marker.tty,
-                        targetWindow: nil))
+                        targetWindow: target))
                 }
                 continue
             }
 
-            let target = marker.tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
             if frontmost {
                 guard let target, !TerminalWindowRegistry.isTopTerminalWindow(target) else {
                     continue

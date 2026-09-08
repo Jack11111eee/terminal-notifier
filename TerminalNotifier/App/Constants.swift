@@ -2,7 +2,9 @@ import Foundation
 
 enum Constants {
     static let appName = "Terminal Notifier"
-    static let terminalAppName = "Terminal"
+    /// CGWindowList 的 owner 名随系统语言本地化（中文系统为「终端」），
+    /// 窗口匹配一律用 bundle id → PID，禁止按名字过滤。
+    static let terminalBundleIdentifier = "com.apple.Terminal"
     static let badgePollInterval: TimeInterval = 1.0
     static let defaultPetSize: CGFloat = 240
     static let menuBarIconSize: CGFloat = 22
@@ -58,18 +60,9 @@ enum NotificationSource: String {
     var bundleIdentifier: String? {
         switch self {
         case .terminal, .claudeCode:
-            return "com.apple.Terminal"
+            return Constants.terminalBundleIdentifier
         case .codexApp:
             return "com.openai.codex"
-        }
-    }
-
-    var windowOwnerName: String {
-        switch self {
-        case .terminal, .claudeCode:
-            return Constants.terminalAppName
-        case .codexApp:
-            return "Codex"
         }
     }
 

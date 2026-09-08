@@ -20,15 +20,27 @@ enum ClaudeHookManager {
 
     private static func command(for event: String) -> String {
         let rel = Constants.claudeEventsRelativePath
-        // tty 三级兜底：ps (controlling tty) → tty 命令 (stdio) → lsof (fd 指向的设备)。
-        // Claude Code 启动的子进程通常无 controlling TTY，前两级返回 "??"/"not a tty"，
-        // lsof 兜底看 stdio 实际指向的设备，通常能拿到 /dev/ttysNNN。
-        // 三级全失败时 tty_name 保持 "??" 等无效值，下游 monitor 归一化为 nil。
+        // tty 四级兜底：ps (controlling tty) → tty 命令 (stdio) → lsof (fd 指向的设备) → 进程树上行。
+        // Claude Code 的 hook 子进程无 controlling TTY、stdio 全被重定向，前三级在真实
+        // 环境中全部失败（历史记录里 tty 恒为空可证）。第四级沿 ppid 链向上找第一个有
+        // controlling tty 的祖先——hook 挂在交互式 claude 进程树下，向上 2~5 层即可碰到
+        // 会话所在窗口的 ttysNNN；bg 任务则追到 bg pty。最多上行 20 层（含 launchd 截停）。
+        // 四级全失败时 tty_name 保持 "??" 等无效值，下游 monitor 归一化为 nil。
         return """
         rel='\(rel)'; dir="$HOME/$rel"; mkdir -p "$dir"; \
         tty_name="$(ps -o tty= -p $$ 2>/dev/null | tr -d ' ')"; \
         if [ -z "$tty_name" ] || [ "$tty_name" = "??" ]; then tty_name="$(tty 2>/dev/null | sed 's#^/dev/##')"; fi; \
         if [ -z "$tty_name" ] || [ "$tty_name" = "not a tty" ]; then tty_name="$(lsof -p $$ -a -Fn -d 0,1,2 2>/dev/null | grep -m1 '^n/dev/tty' | sed 's#^n/dev/##')"; fi; \
+        if [ -z "$tty_name" ] || [ "$tty_name" = "??" ] || [ "$tty_name" = "not a tty" ]; then \
+            _p=$$; _i=0; _tty=""; \
+            while [ "$_i" -lt 20 ]; do \
+                _p="$(ps -o ppid= -p "$_p" 2>/dev/null | tr -d ' ')"; \
+                if [ -z "$_p" ] || [ "$_p" -le 1 ]; then break; fi; \
+                _tty="$(ps -o tty= -p "$_p" 2>/dev/null | tr -d ' ')"; \
+                if [ -n "$_tty" ] && [ "$_tty" != "??" ]; then tty_name="$_tty"; break; fi; \
+                _i=$((_i+1)); \
+            done; \
+        fi; \
         file="$(mktemp "$dir/\(event).XXXXXX")" || exit 0; \
         printf '{"event":"%s","source":"claude","tty":"%s","timestamp":%s}\n' '\(event)' "$tty_name" "$(date +%s)" > "$file" \
         \(Constants.claudeHookMarker)

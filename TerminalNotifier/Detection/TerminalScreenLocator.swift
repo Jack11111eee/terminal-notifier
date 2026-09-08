@@ -2,15 +2,21 @@ import AppKit
 
 struct TerminalScreenLocator {
     /// Returns the screen where the target app's frontmost window is, or main screen.
-    static func locateScreen(ownerName: String = Constants.terminalAppName) -> NSScreen {
+    /// 匹配一律按 PID（owner 名随系统语言本地化，中文系统为「终端」）。
+    static func locateScreen(bundleIdentifier: String = Constants.terminalBundleIdentifier) -> NSScreen {
+        let ownerPID = NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == bundleIdentifier }?
+            .processIdentifier
+
         let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
         ) as? [[String: Any]] ?? []
 
         for window in windowList {
-            guard let owner = window[kCGWindowOwnerName as String] as? String,
-                  owner == ownerName else { continue }
+            if let ownerPID,
+               let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+               pid != ownerPID { continue }
             guard let boundsDict = window[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
             let bounds = CGRect(
                 x: boundsDict["X"] ?? 0,
