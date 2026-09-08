@@ -1,5 +1,77 @@
 import AppKit
 
+/// 同一 tty 的密集 `done` 防抖：Monitor/自动化会话每轮结束都触发一次 Stop hook，
+/// 猫会被连环弹。首条 done 立即发出（不延迟正常提醒）；窗口期内的后续 done 只
+/// 计数，静默 `doneDebounceSeconds` 后发一条「连续完成 N 轮」汇总事件收束。
+/// needs_confirm 与不同 tty 不经过本层。
+final class DoneDebouncer {
+    struct Summary {
+        let tty: String?
+        let targetWindow: TerminalWindowInfo?
+        let count: Int
+    }
+
+    private let windowSeconds: TimeInterval
+    private var timers: [String: Timer] = [:]
+    private var counts: [String: Int] = [:]
+    private var contexts: [String: AgentNotificationEvent] = [:]
+    private let onEmit: (Summary) -> Void
+
+    /// tty 为 nil 时用此 key，与其他任何真实 tty 不冲突。
+    private static let nilTTYKey = "\u{0}<nil>"
+
+    init(windowSeconds: TimeInterval = Constants.doneDebounceSeconds,
+         onEmit: @escaping (Summary) -> Void) {
+        self.windowSeconds = windowSeconds
+        self.onEmit = onEmit
+    }
+
+    /// 投递一条 done 事件。返回 true 表示这是窗口内首条（调用方应该照常放行
+    /// 原事件）；返回 false 表示已并入正在集结的窗口（调用方应吞掉）。
+    @discardableResult
+    func offer(_ event: AgentNotificationEvent) -> Bool {
+        guard event.category == .done, event.source == .claudeCode else {
+            return true
+        }
+        let key = event.tty ?? Self.nilTTYKey
+        if timers[key] == nil {
+            counts[key] = 1
+            contexts[key] = event
+            scheduleFlush(for: key)
+            return true
+        }
+        counts[key, default: 0] += 1
+        contexts[key] = event
+        return false
+    }
+
+    private func scheduleFlush(for key: String) {
+        timers[key] = Timer(timeInterval: windowSeconds, repeats: false) { [weak self] _ in
+            self?.flush(key)
+        }
+        RunLoop.main.add(timers[key]!, forMode: .common)
+    }
+
+    private func flush(_ key: String) {
+        timers[key] = nil
+        guard let count = counts.removeValue(forKey: key),
+              count > 1,
+              let context = contexts.removeValue(forKey: key) else {
+            contexts.removeValue(forKey: key)
+            return
+        }
+        onEmit(Summary(tty: context.tty, targetWindow: context.targetWindow, count: count))
+    }
+
+    /// 停止所有计时并在必要时立即收束（App 退出/监控暂停时调用）。
+    func cancel() {
+        for timer in timers.values { timer.invalidate() }
+        timers.removeAll()
+        counts.removeAll()
+        contexts.removeAll()
+    }
+}
+
 /// 监听 Claude Code hook 投放的事件标记文件。
 ///
 /// hook（注册在 ~/.claude/settings.json）在「需要确认 / 对话完成」时，
@@ -17,11 +89,47 @@ struct AgentNotificationEvent {
     let source: NotificationSource
     let tty: String?
     let targetWindow: TerminalWindowInfo?
+    /// 仅 doneBatched 用：窗口期内合并的 done 数；其余事件恒 1。
+    let batchCount: Int
+
+    init(
+        category: MessageProvider.Category,
+        source: NotificationSource,
+        tty: String?,
+        targetWindow: TerminalWindowInfo?,
+        batchCount: Int = 1
+    ) {
+        self.category = category
+        self.source = source
+        self.tty = tty
+        self.targetWindow = targetWindow
+        self.batchCount = batchCount
+    }
 }
 
 class ClaudeCodeMonitor {
     weak var delegate: ClaudeCodeMonitorDelegate?
     private var timer: Timer?
+    /// 同 tty 密集 done 合并；触发条件详见 DoneDebouncer 文档注释。
+    private lazy var doneDebouncer = DoneDebouncer { [weak self] summary in
+        guard let self else { return }
+        self.flushWindowAttribution(for: summary.tty) { target in
+            self.delegate?.claudeCodeMonitor(
+                self,
+                didEmit: summary.count > 1
+                    ? AgentNotificationEvent(
+                        category: .doneBatched,
+                        source: .claudeCode,
+                        tty: summary.tty,
+                        targetWindow: target ?? summary.targetWindow,
+                        batchCount: summary.count)
+                    : AgentNotificationEvent(
+                        category: .done,
+                        source: .claudeCode,
+                        tty: summary.tty,
+                        targetWindow: target ?? summary.targetWindow))
+        }
+    }
 
     func startMonitoring() {
         ensureEventsDirExists()
@@ -35,6 +143,7 @@ class ClaudeCodeMonitor {
     func stopMonitoring() {
         timer?.invalidate()
         timer = nil
+        doneDebouncer.cancel()
     }
 
     private func ensureEventsDirExists() {
@@ -62,28 +171,53 @@ class ClaudeCodeMonitor {
             // 配置下都应能精确到窗口。
             let target = marker.tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
 
-            guard windowAttributionEnabled else {
-                if !frontmost {
-                    delegate?.claudeCodeMonitor(self, didEmit: AgentNotificationEvent(
-                        category: category,
-                        source: .claudeCode,
-                        tty: marker.tty,
-                        targetWindow: target))
-                }
-                continue
-            }
+            guard Self.shouldEmit(
+                category: category, frontmost: frontmost,
+                target: target, windowAttributionEnabled: windowAttributionEnabled
+            ) else { continue }
 
-            if frontmost {
-                guard let target, !TerminalWindowRegistry.isTopTerminalWindow(target) else {
-                    continue
-                }
-            }
+            guard doneDebouncer.offer(AgentNotificationEvent(
+                category: category,
+                source: .claudeCode,
+                tty: marker.tty,
+                targetWindow: target)) else { continue }
+
             delegate?.claudeCodeMonitor(self, didEmit: AgentNotificationEvent(
                 category: category,
                 source: .claudeCode,
                 tty: marker.tty,
                 targetWindow: target))
         }
+    }
+
+    /// Terminal 前台 + 窗口归因开启时，丢弃属于最上层（用户正看的）窗口的事件。
+    private static func shouldEmit(
+        category: MessageProvider.Category,
+        frontmost: Bool,
+        target: TerminalWindowInfo?,
+        windowAttributionEnabled: Bool
+    ) -> Bool {
+        guard windowAttributionEnabled else {
+            return !frontmost
+        }
+        if frontmost {
+            guard let target, !TerminalWindowRegistry.isTopTerminalWindow(target) else {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// 防抖收束事件发送前重查归因（timer 回调时刻的前台状态可能已变化）。
+    private func flushWindowAttribution(for tty: String?, emit: @escaping (TerminalWindowInfo?) -> Void) {
+        let target = tty.flatMap { TerminalWindowRegistry.window(forTTY: $0) }
+        guard Self.shouldEmit(
+            category: .doneBatched,
+            frontmost: isTerminalFrontmost(),
+            target: target,
+            windowAttributionEnabled: PreferencesManager.shared.claudeWindowAttributionEnabled
+        ) else { return }
+        emit(target)
     }
 
     private func markerFiles() -> [URL] {

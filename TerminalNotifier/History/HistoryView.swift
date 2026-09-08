@@ -192,7 +192,8 @@ struct HistoryView: View {
                  MessageProvider.Category.codexNeedsConfirm.rawValue:
                 confirm += 1
             case MessageProvider.Category.done.rawValue,
-                 MessageProvider.Category.codexDone.rawValue:
+                 MessageProvider.Category.codexDone.rawValue,
+                 MessageProvider.Category.doneBatched.rawValue:
                 done += 1
             default:
                 terminal += 1
@@ -253,7 +254,8 @@ private struct HistoryRecordRow: View {
         switch record.category {
         case MessageProvider.Category.needsConfirm.rawValue:
             return historyLang("Needs confirmation", zh: "需要确认", locale: locale)
-        case MessageProvider.Category.done.rawValue:
+        case MessageProvider.Category.done.rawValue,
+             MessageProvider.Category.doneBatched.rawValue:
             return historyLang("Claude done", zh: "Claude 完成", locale: locale)
         case MessageProvider.Category.codexNeedsConfirm.rawValue:
             return historyLang("Codex needs confirmation", zh: "Codex 需要确认", locale: locale)
@@ -272,7 +274,8 @@ private struct HistoryRecordRow: View {
         switch record.category {
         case MessageProvider.Category.needsConfirm.rawValue:
             return "questionmark.circle"
-        case MessageProvider.Category.done.rawValue:
+        case MessageProvider.Category.done.rawValue,
+             MessageProvider.Category.doneBatched.rawValue:
             return "checkmark.circle"
         case MessageProvider.Category.codexNeedsConfirm.rawValue:
             return "questionmark.circle"
@@ -291,7 +294,8 @@ private struct HistoryRecordRow: View {
         switch record.category {
         case MessageProvider.Category.needsConfirm.rawValue:
             return .orange
-        case MessageProvider.Category.done.rawValue:
+        case MessageProvider.Category.done.rawValue,
+             MessageProvider.Category.doneBatched.rawValue:
             return .green
         case MessageProvider.Category.codexNeedsConfirm.rawValue:
             return .orange
