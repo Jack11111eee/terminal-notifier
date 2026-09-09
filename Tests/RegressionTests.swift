@@ -584,6 +584,104 @@ final class TypingActivityTests: XCTestCase {
     }
 }
 
+/// 会话级屏蔽（BlockedSessionsManager）的确定性回归。
+/// 用独立 UserDefaults suite，不污染真实偏好。
+final class BlockedSessionsTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
+    override func setUpWithError() throws {
+        suiteName = "blocked-sessions-tests-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+    }
+
+    override func tearDownWithError() throws {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    private func makeManager() -> BlockedSessionsManager {
+        BlockedSessionsManager(storageKey: "blockedSessionsTest", defaults: defaults)
+    }
+
+    func testBlockAllMutesEveryCategory() {
+        let manager = makeManager()
+        manager.block(tty: "ttys001", title: "Busy monitor tab", scope: .all)
+        XCTAssertTrue(manager.blocks(tty: "ttys001", category: .done))
+        XCTAssertTrue(manager.blocks(tty: "ttys001", category: .doneBatched))
+        XCTAssertTrue(manager.blocks(tty: "ttys001", category: .needsConfirm))
+        // 其他会话不受影响；nil tty 不屏蔽（宁可多提醒）
+        XCTAssertFalse(manager.blocks(tty: "ttys002", category: .done))
+        XCTAssertFalse(manager.blocks(tty: nil, category: .needsConfirm))
+    }
+
+    func testDoneOnlySparesConfirmation() {
+        let manager = makeManager()
+        manager.block(tty: "ttys003", title: "GSD loop", scope: .doneOnly)
+        XCTAssertTrue(manager.blocks(tty: "ttys003", category: .done))
+        XCTAssertTrue(manager.blocks(tty: "ttys003", category: .doneBatched))
+        XCTAssertFalse(manager.blocks(tty: "ttys003", category: .needsConfirm),
+                       "Done-only scope must keep confirmation reminders flowing")
+    }
+
+    func testTTYNormalizationAndReblockUpdatesScope() {
+        let manager = makeManager()
+        // /dev/ 前缀与空白会被归一化
+        manager.block(tty: "/dev/ttys009", title: "A", scope: .doneOnly)
+        XCTAssertTrue(manager.blocks(tty: "ttys009", category: .done))
+        // 同 tty 重复屏蔽 = 改范围，不是新增
+        manager.block(tty: "ttys009", title: "B", scope: .all)
+        XCTAssertEqual(manager.sessions.count, 1)
+        XCTAssertTrue(manager.blocks(tty: "ttys009", category: .needsConfirm))
+        XCTAssertEqual(manager.sessions.first?.titleSnapshot, "B")
+    }
+
+    func testUnblockStopsMuting() {
+        let manager = makeManager()
+        manager.block(tty: "ttys004", title: "Noisy", scope: .all)
+        manager.unblock(tty: "ttys004")
+        XCTAssertTrue(manager.sessions.isEmpty)
+        XCTAssertFalse(manager.blocks(tty: "ttys004", category: .done))
+    }
+
+    func testExpiredEntriesStopBlockingAndPrunedOnLoad() {
+        let manager = makeManager()
+        manager.block(tty: "ttys005", title: "Old", scope: .all)
+        // 过期后（>7 天）不再拦截,即使条目还在列表里
+        let future = Date().addingTimeInterval(Double(BlockedSessionsManager.expiryDays + 1) * 86400)
+        XCTAssertFalse(manager.blocks(tty: "ttys005", category: .done, at: future))
+        // 重新加载（模拟 App 重启）时剔除过期条目
+        let reloaded = BlockedSessionsManager(storageKey: "blockedSessionsTest", defaults: defaults)
+        // 当前未过期:仍在
+        XCTAssertEqual(reloaded.sessions.filter { $0.tty == "ttys005" }.count, 1)
+
+        // 真正的过期剔除路径：手写一条 createdAt 很旧的条目进 defaults,再加载
+        var stale = reloaded.sessions.first!
+        stale.createdAt = Date().addingTimeInterval(-Double(BlockedSessionsManager.expiryDays + 2) * 86400)
+        let data = try! JSONEncoder().encode([stale])
+        defaults.set(data, forKey: "blockedSessionsTest")
+        let pruned = BlockedSessionsManager(storageKey: "blockedSessionsTest", defaults: defaults)
+        XCTAssertTrue(pruned.sessions.isEmpty, "Stale entries must be pruned on load")
+    }
+
+    func testInterceptCounterAccumulates() {
+        let manager = makeManager()
+        manager.block(tty: "ttys006", title: "Counter", scope: .all)
+        manager.recordIntercept(tty: "ttys006")
+        manager.recordIntercept(tty: "ttys006")
+        manager.recordIntercept(tty: nil)   // 无 tty 的无效路径,不崩溃不计数
+        manager.recordIntercept(tty: "ttys777")  // 未屏蔽的 tty,忽略
+        XCTAssertEqual(manager.sessions.first?.interceptedCount, 2)
+        XCTAssertNotNil(manager.sessions.first?.lastInterceptedAt)
+    }
+
+    func testPersistenceRoundTrip() {
+        let manager = makeManager()
+        manager.block(tty: "ttys010", title: "Round trip", scope: .doneOnly)
+        let reloaded = BlockedSessionsManager(storageKey: "blockedSessionsTest", defaults: defaults)
+        XCTAssertEqual(reloaded.sessions, manager.sessions, "Blocked sessions must survive an app restart")
+    }
+}
+
 
 final class WindowLayoutTests: XCTestCase {
     private func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
@@ -751,6 +849,7 @@ enum RegressionTests {
         suite.addTest(SettingsVisualModeTests.defaultTestSuite)
         suite.addTest(DoneDebouncerTests.defaultTestSuite)
         suite.addTest(TypingActivityTests.defaultTestSuite)
+        suite.addTest(BlockedSessionsTests.defaultTestSuite)
         if ProcessInfo.processInfo.environment["TN_RUN_UI_TESTS"] == "1" {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.accessory)

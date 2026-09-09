@@ -72,6 +72,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlayController.onSnoozeRequested = { [weak self] in
             self?.stateMachine.handleEvent(.userSnoozed)
         }
+        // 「屏蔽」入口的可见性与动作在每次展示时按来源决定（showOverlay 内设置）。
+        overlayController.onBlockRequested = nil
 
         contentMonitor.delegate = self
         claudeMonitor.delegate = self
@@ -262,6 +264,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         currentOverlayTargetWindow = targetWindow
         let screen = targetWindow.map { TerminalWindowRegistry.screen(for: $0) }
             ?? TerminalScreenLocator.locateScreen(bundleIdentifier: source.bundleIdentifier ?? Constants.terminalBundleIdentifier)
+        // 屏蔽入口只在「可屏蔽」提醒上出现：Claude Code 来源且事件带 tty
+        // （终端 badge / Codex 是 app 级事件，无会话身份；tty 缺失也无法定位会话）。
+        configureBlockAction(source: source, tty: stateMachine.activeTTY, targetWindow: targetWindow)
         // 输入保护：正在打字时不弹全尺寸猫（气泡+大猫占屏幕中央，遮挡输入视线），
         // 改弹角落迷你猫，点迷你猫可展开。声音照常（不遮耳）。
         let typingActive = preferences.typingShrinkEnabled && typingWatcher.isTypingNow
@@ -276,6 +281,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             stateMachine.handleEvent(.dropAnimationCompleted)
         }
         tnLog("showOverlay: done")
+    }
+
+    /// 为当前提醒接好「屏蔽」动作：点按钮 → 弹范围选择（屏蔽全部 / 仅完成 /
+    /// 取消），选择后写入 BlockedSessionsManager 并关闭当前提醒。
+    private func configureBlockAction(
+        source: NotificationSource,
+        tty: String?,
+        targetWindow: TerminalWindowInfo?
+    ) {
+        guard source == .claudeCode, let tty, !tty.isEmpty else {
+            overlayController.onBlockRequested = nil
+            return
+        }
+        overlayController.onBlockRequested = { [weak self] in
+            guard let self else { return }
+            let title = targetWindow?.title ?? ""
+            let zh = self.preferences.resolvedLocale == "zh"
+            let choice = Self.chooseBlockScope(zh: zh)
+            switch choice {
+            case .some(.all):
+                BlockedSessionsManager.shared.block(tty: tty, title: title, scope: .all)
+                self.dismissActiveReminderForBlock()
+            case .some(.doneOnly):
+                BlockedSessionsManager.shared.block(tty: tty, title: title, scope: .doneOnly)
+                self.dismissActiveReminderForBlock()
+            case nil:
+                break
+            }
+        }
+    }
+
+    /// 范围选择对话框（NSAlert，模态于提醒气泡）。返回 nil = 取消。
+    private static func chooseBlockScope(zh: Bool) -> BlockedSessionsManager.BlockedSession.Scope? {
+        let alert = NSAlert()
+        alert.messageText = zh ? "屏蔽该终端会话" : "Block this terminal session"
+        alert.informativeText = zh
+            ? "屏蔽后该会话不再弹出提醒（7 天后自动失效）。需要确认类提醒是否也屏蔽？"
+            : "Reminders from this session will be muted (auto-expires after 7 days). Also mute confirmation requests?"
+        alert.addButton(withTitle: zh ? "屏蔽全部" : "Block all")
+        alert.addButton(withTitle: zh ? "仅屏蔽完成提醒" : "Done only")
+        alert.addButton(withTitle: zh ? "取消" : "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .all
+        case .alertSecondButtonReturn: return .doneOnly
+        default: return nil
+        }
+    }
+
+    /// 屏蔽生效后收起当前提醒（等效手动关闭；猫已无意义，此时再弹也是被屏蔽的）。
+    private func dismissActiveReminderForBlock() {
+        switch stateMachine.currentState {
+        case .detected, .showing:
+            stateMachine.handleEvent(.userDismissed)
+        default:
+            break
+        }
     }
 
     private func showHistory() {

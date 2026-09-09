@@ -26,6 +26,8 @@ final class OverlayWindowController {
     var onDismissRequested: (() -> Void)?
     var onOpenSourceRequested: (() -> Void)?
     var onSnoozeRequested: (() -> Void)?
+    /// 「屏蔽此会话」请求（AppDelegate 决定是否提供：仅 Claude 来源且带 tty）。
+    var onBlockRequested: (() -> Void)?
 
     func show(on screen: NSScreen, message: String,
               source: NotificationSource = .terminal,
@@ -81,6 +83,7 @@ final class OverlayWindowController {
         content.onClose = { [weak self] in self?.onDismissRequested?() }
         content.onOpen = { [weak self] in self?.onOpenSourceRequested?() }
         content.onSnooze = { [weak self] in self?.onSnoozeRequested?() }
+        content.onBlock = onBlockRequested
         panel.contentView = content
         window = panel
         contentView = content

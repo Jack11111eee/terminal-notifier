@@ -219,6 +219,59 @@ struct SettingsView: View {
                                   $preferences.switchToTerminal)
                 }
             }
+            Section {
+                VStack(alignment: .leading, spacing: 16) {
+                    blockedSessionsList
+                }
+            } header: {
+                Text(text("Blocked sessions", "已屏蔽的会话"))
+            } footer: {
+                Text(text("Reminders from these terminal sessions are muted. Entries auto-expire after 7 days to avoid muting a reused tty.", "这些终端会话的提醒已被屏蔽。条目 7 天后自动失效，避免 tty 被新会话复用后继续误屏蔽。"))
+            }
+        }
+    }
+
+    /// 屏蔽会话管理列表：标题快照 + 范围 + 拦截计数，可逐条移除。
+    /// shared 单例注入 @ObservedObject，解除屏蔽立即刷新。
+    @ObservedObject private var blockedSessionsManager = BlockedSessionsManager.shared
+    @ViewBuilder
+    private var blockedSessionsList: some View {
+        if blockedSessionsManager.sessions.isEmpty {
+            Label(text("No blocked sessions. Use “Block” on a Claude Code reminder.",
+                       "暂无屏蔽的会话。可在 Claude Code 提醒上点「屏蔽」。"),
+                  systemImage: "bell.slash")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(blockedSessionsManager.sessions) { session in
+                blockedSessionRow(session)
+            }
+        }
+    }
+
+    private func blockedSessionRow(_ session: BlockedSessionsManager.BlockedSession) -> some View {
+        let zh = locale == "zh"
+        let scopeText = session.scope == .all
+            ? (zh ? "全部提醒" : "All reminders")
+            : (zh ? "仅完成提醒" : "Done only")
+        let intercepted = session.interceptedCount > 0
+            ? (zh ? "已拦截 \(session.interceptedCount) 次" : "\(session.interceptedCount) intercepted")
+            : (zh ? "尚未拦截" : "None intercepted")
+        return HStack(spacing: 10) {
+            Image(systemName: "macwindow.on.rectangle")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.titleSnapshot.isEmpty ? session.tty : session.titleSnapshot)
+                    .lineLimit(1)
+                Text("\(scopeText) · \(intercepted)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button(text("Unblock", "解除屏蔽")) {
+                blockedSessionsManager.unblock(tty: session.tty)
+            }
+            .controlSize(.small)
         }
     }
 

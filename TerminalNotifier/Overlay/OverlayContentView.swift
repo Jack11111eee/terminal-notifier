@@ -5,6 +5,13 @@ final class OverlayContentView: NSView {
     var onSnooze: (() -> Void)? { didSet { bubbleView.onSnoozeTapped = onSnooze } }
     var onClose: (() -> Void)? { didSet { bubbleView.onCloseTapped = onClose } }
     var onOpen: (() -> Void)? { didSet { bubbleView.onOpenTapped = onOpen } }
+    /// 「屏蔽此会话」回调；nil 时隐藏屏蔽按钮（非 Claude 来源 / 无 tty）。
+    var onBlock: (() -> Void)? {
+        didSet {
+            bubbleView.onBlockTapped = onBlock
+            bubbleView.blockButton.isHidden = onBlock == nil
+        }
+    }
     let petView: PetSpriteView
     let bubbleView: SpeechBubbleView
     private let petSize: CGFloat
